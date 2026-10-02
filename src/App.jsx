@@ -1,240 +1,249 @@
 import React, { useState } from 'react';
-import { 
-  Truck, 
-  User, 
-  ShieldAlert, 
-  QrCode, 
-  Wallet, 
-  MapPin, 
-  Send,
-  Coins,
-  CheckCircle
-} from 'lucide-react';
+import { Truck, User, ShieldAlert, Upload, CheckCircle, ArrowRight } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 export default function App() {
-  const [currentRole, setCurrentRole] = useState('customer');
+  // حالة التنقل بين صفحات المصادقة والتطبيق
+  const [view, setView] = useState('register'); // register, login, dashboard
+  const [role, setRole] = useState('customer'); // customer, driver
   
-  const [trip, setTrip] = useState({
-    id: "TRIP-2026-X",
-    status: "pending",
-    pickup: "الخرطوم - السوق المحلي",
-    dropoff: "عطبرة - السوق الكبير",
-    cargo: "مواد غذائية - 5 طن",
-    finalPrice: null,
-    paymentStatus: "unpaid"
+  // حقول نموذج التسجيل
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    password: '',
+    licenseFile: null,
+    idCardFile: null
   });
 
-  const [chat, setChat] = useState([
-    { sender: 'system', text: 'تم إنشاء طلب الشحن بنجاح. في انتظار عروض السائقين...' }
-  ]);
-  const [currentMessage, setCurrentMessage] = useState("");
-  const [activeOffer, setActiveOffer] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSendMessage = (text, sender = 'customer') => {
-    if (!text.trim()) return;
-    setChat(prev => [...prev, { sender, text }]);
-    setCurrentMessage("");
+  // التعامل مع إدخال النصوص
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSendOffer = (amount) => {
-    setActiveOffer(amount);
-    setChat(prev => [
-      ...prev, 
-      { sender: 'driver', text: `أقدم لك عرض شحن رسمي بقيمة ${amount.toLocaleString()} جنيه سوداني.` }
-    ]);
+  // التعامل مع اختيار الملفات (الرخصة والهوية)
+  const handleFileChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.files[0] });
   };
 
-  const handleAcceptOffer = () => {
-    setTrip(prev => ({ ...prev, status: 'negotiating', finalPrice: activeOffer }));
-    setChat(prev => [...prev, { sender: 'system', text: `تم قبول العرض بقيمة ${activeOffer.toLocaleString()} جنيه. يرجى إيداع الضمان عبر بنكك.` }]);
-    setActiveOffer(null);
-  };
+  // تنفيذ عملية التسجيل الحقيقي عبر Supabase
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMessage('');
 
-  const handleUploadPayment = () => {
-    setTrip(prev => ({ ...prev, paymentStatus: 'verification_pending' }));
-    setChat(prev => [...prev, { sender: 'system', text: 'تم رفع إشعار التحويل وبانتظار مراجعة المنصة.' }]);
-  };
+    try {
+      // 1. إنشاء الحساب في نظام المصادقة
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+      });
 
-  const handleAdminApprovePayment = () => {
-    setTrip(prev => ({ ...prev, paymentStatus: 'held', status: 'confirmed' }));
-    setChat(prev => [...prev, { sender: 'system', text: 'تأكيد الدفع! المبلغ الآن مضمون بالمنصة.' }]);
-  };
+      if (authError) throw authError;
+      const userId = authData.user.id;
 
-  const handleScanQR = () => {
-    setTrip(prev => ({ ...prev, status: 'delivered', paymentStatus: 'released' }));
-    setChat(prev => [...prev, { sender: 'system', text: 'تم مسح QR بنجاح وتكتمل الرحلة!' }]);
+      let licenseUrl = '';
+      let idCardUrl = '';
+
+      // 2. إذا كان المستخدم سائقاً، نقوم برفع صور الرخصة والهوية إلى سوبابيز ستورج
+      if (role === 'driver') {
+        if (formData.licenseFile) {
+          const fileExt = formData.licenseFile.name.split('.').pop();
+          const fileName = `${userId}_license.${fileExt}`;
+          const { error: licError } = await supabase.storage.from('driver-documents').upload(fileName, formData.licenseFile);
+          if (licError) throw licError;
+          const { data: licData } = supabase.storage.from('driver-documents').getPublicUrl(fileName);
+          licenseUrl = licData.publicUrl;
+        }
+
+        if (formData.idCardFile) {
+          const fileExt = formData.idCardFile.name.split('.').pop();
+          const fileName = `${userId}_idcard.${fileExt}`;
+          const { error: idError } = await supabase.storage.from('driver-documents').upload(fileName, formData.idCardFile);
+          if (idError) throw idError;
+          const { data: idData } = supabase.storage.from('driver-documents').getPublicUrl(fileName);
+          idCardUrl = idData.publicUrl;
+        }
+      }
+
+      // 3. حفظ بيانات المستخدم الإضافية في جدول profiles
+      const { error: profileError } = await supabase.from('profiles').insert([
+        {
+          id: userId,
+          full_name: formData.fullName,
+          email: formData.email,
+          role: role,
+          is_verified: role === 'customer' ? true : false, // السائق يبدأ غير موثق لحين مراجعة الإدارة
+          license_url: licenseUrl,
+          id_card_url: idCardUrl
+        }
+      ]);
+
+      if (profileError) throw profileError;
+
+      alert(role === 'driver' ? 'تم تسجيل الحساب بنجاح! حسابك قيد المراجعة من الإدارة للتحقق من المستندات.' : 'تم إنشاء الحساب وتسجيل الدخول بنجاح!');
+      setView('dashboard');
+
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans" dir="rtl">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-sky-600 p-2 rounded-xl text-white">
-              <Truck size={28} />
-            </div>
-            <div>
-              <h1 className="text-xl font-extrabold text-slate-800">تريلا الذكية</h1>
-              <p className="text-xs text-slate-500">نظام نقل لوجستي آمن</p>
-            </div>
+      {/* شريط علوي */}
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="bg-sky-600 p-2 rounded-xl text-white">
+            <Truck size={24} />
           </div>
-          
-          <div className="flex items-center bg-slate-100 p-1.5 rounded-xl border border-slate-200">
-            <button 
-              onClick={() => setCurrentRole('customer')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentRole === 'customer' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-600'}`}
-            >
-              العميل
-            </button>
-            <button 
-              onClick={() => setCurrentRole('driver')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentRole === 'driver' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-600'}`}
-            >
-              السائق
-            </button>
-            <button 
-              onClick={() => setCurrentRole('admin')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentRole === 'admin' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-600'}`}
-            >
-              المسؤول
-            </button>
-          </div>
+          <h1 className="text-lg font-extrabold text-slate-800">تريلا الذكية</h1>
         </div>
+        {view !== 'dashboard' && (
+          <div className="text-xs text-slate-500">
+            لديك حساب بالفعل؟ <button onClick={() => setView('login')} className="text-sky-600 font-bold hover:underline">تسجيل الدخول</button>
+          </div>
+        )}
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto p-4 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <section className="md:col-span-1 flex flex-col gap-6">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-            <h2 className="font-bold text-slate-800 text-lg mb-4">تفاصيل الرحلة</h2>
-            <div className="space-y-4">
-              <div className="flex gap-3">
-                <MapPin className="text-emerald-500 shrink-0" size={20} />
-                <div>
-                  <p className="text-xs text-slate-400">الانطلاق</p>
-                  <p className="text-sm font-bold text-slate-700">{trip.pickup}</p>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <MapPin className="text-rose-500 shrink-0" size={20} />
-                <div>
-                  <p className="text-xs text-slate-400">الوصول</p>
-                  <p className="text-sm font-bold text-slate-700">{trip.dropoff}</p>
-                </div>
-              </div>
-              <div className="border-t border-slate-100 pt-3">
-                <p className="text-xs text-slate-400">البضاعة</p>
-                <p className="text-sm font-bold text-slate-700">{trip.cargo}</p>
-              </div>
-              <div className="border-t border-slate-100 pt-3 flex justify-between items-center">
-                <div>
-                  <p className="text-xs text-slate-400">السعر المتفق عليه</p>
-                  <p className="text-lg font-black text-sky-600">
-                    {trip.finalPrice ? `${trip.finalPrice.toLocaleString()} ج.س` : "غير محدد"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+      {/* المحتوى الرئيسي */}
+      <main className="flex-1 flex items-center justify-center p-4">
+        
+        {view === 'register' && (
+          <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-lg w-full">
+            <h2 className="text-xl font-black text-slate-800 mb-2">إنشاء حساب جديد</h2>
+            <p className="text-xs text-slate-500 mb-6">اختر نوع الحساب وابدأ رحلتك معنا بكل أمان.</p>
 
-        <section className="md:col-span-2 flex flex-col gap-6">
-          {currentRole === 'customer' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex-1 flex flex-col justify-between">
+            {/* اختيار الدور */}
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              <button
+                type="button"
+                onClick={() => setRole('customer')}
+                className={`py-3 px-4 rounded-xl font-bold text-xs border transition-all ${role === 'customer' ? 'border-sky-600 bg-sky-50 text-sky-700' : 'border-slate-200 text-slate-600'}`}
+              >
+                تسجيل كـ (عميل / شاحن)
+              </button>
+              <button
+                type="button"
+                onClick={() => setRole('driver')}
+                className={`py-3 px-4 rounded-xl font-bold text-xs border transition-all ${role === 'driver' ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-600'}`}
+              >
+                تسجيل كـ (سائق / كابتن)
+              </button>
+            </div>
+
+            {errorMessage && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs p-3 rounded-xl mb-4 font-bold">
+                {errorMessage}
+              </div>
+            )}
+
+            <form onSubmit={handleRegister} className="space-y-4">
               <div>
-                <h2 className="font-bold text-slate-800 text-lg mb-4">لوحة العميل</h2>
-
-                {trip.finalPrice && trip.paymentStatus === 'unpaid' && (
-                  <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl mb-4 flex justify-between items-center">
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm">تحويل الضمان عبر بنكك</h4>
-                      <p className="text-xs text-slate-600">حّول {trip.finalPrice.toLocaleString()} ج.س لحساب المنصة</p>
-                    </div>
-                    <button onClick={handleUploadPayment} className="bg-amber-600 text-white font-bold text-xs px-4 py-2 rounded-lg">
-                      تأكيد التحويل
-                    </button>
-                  </div>
-                )}
-
-                {trip.paymentStatus === 'held' && trip.status !== 'delivered' && (
-                  <div className="bg-sky-50 border border-sky-200 p-5 rounded-xl mb-4 text-center">
-                    <QrCode size={48} className="text-sky-600 mx-auto mb-2" />
-                    <p className="text-xs text-slate-600">رمز الاستلام الرقمي جاهز للتقديم للسائق</p>
-                  </div>
-                )}
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  {role === 'driver' ? 'الاسم الرباعي الكامل' : 'الاسم الكامل'}
+                </label>
+                <input 
+                  type="text" 
+                  name="fullName"
+                  required
+                  value={formData.fullName}
+                  onChange={handleChange}
+                  placeholder={role === 'driver' ? 'محمد أحمد علي عمر' : 'محمد أحمد'}
+                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-sky-500"
+                />
               </div>
 
-              <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col h-72">
-                <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-700">التفاوض المالي</span>
-                  {activeOffer && (
-                    <button onClick={handleAcceptOffer} className="bg-emerald-600 text-white text-xs px-3 py-1 rounded font-bold">
-                      قبول {activeOffer.toLocaleString()} ج.س
-                    </button>
-                  )}
-                </div>
-                <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/50">
-                  {chat.map((msg, index) => (
-                    <div key={index} className={`flex ${msg.sender === 'customer' ? 'justify-start' : msg.sender === 'system' ? 'justify-center' : 'justify-end'}`}>
-                      <div className={`p-3 rounded-xl max-w-sm text-xs ${
-                        msg.sender === 'customer' ? 'bg-sky-600 text-white' : 
-                        msg.sender === 'system' ? 'bg-slate-200 text-slate-600 font-bold' : 
-                        'bg-white text-slate-800 border border-slate-200'
-                      }`}>
-                        {msg.text}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="p-2 border-t border-slate-200 bg-white flex gap-2">
-                  <input 
-                    type="text" 
-                    value={currentMessage}
-                    onChange={(e) => setCurrentMessage(e.target.value)}
-                    placeholder="اكتب رسالة..."
-                    className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-xs"
-                  />
-                  <button onClick={() => handleSendMessage(currentMessage, 'customer')} className="bg-sky-600 text-white p-2 rounded-lg">
-                    <Send size={16} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {currentRole === 'driver' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex-1 flex flex-col justify-between">
               <div>
-                <h2 className="font-bold text-slate-800 text-lg mb-4">لوحة السائق</h2>
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4">
-                  <p className="text-xs font-bold text-slate-700 mb-2">تقديم عرض سعر:</p>
-                  <div className="flex gap-2">
-                    <button onClick={() => handleSendOffer(400000)} className="bg-white border px-3 py-1.5 rounded text-xs font-bold">400,000 ج.س</button>
-                    <button onClick={() => handleSendOffer(420000)} className="bg-white border px-3 py-1.5 rounded text-xs font-bold">420,000 ج.س</button>
+                <label className="block text-xs font-bold text-slate-700 mb-1">البريد الإلكتروني</label>
+                <input 
+                  type="email5" 
+                  name="email"
+                  required
+                  value={formData.email}
+                  onChange={handleChange}
+                  placeholder="name@example.com"
+                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">كلمة السر</label>
+                <input 
+                  type="password" 
+                  name="password"
+                  required
+                  value={formData.password}
+                  onChange={handleChange}
+                  placeholder="••••••••"
+                  className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              {/* حقول خاصة بالسائق (رفع المستندات) */}
+              {role === 'driver' && (
+                <div className="space-y-4 pt-2 border-t border-slate-100">
+                  <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-[11px] text-amber-800">
+                    ⚠️ يتطلب حساب السائق رفع المستندات الرسمية لكي تتمكن الإدارة من مطابقتها وتفعيل حسابك.
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">صورة رخصة القيادة</label>
+                    <input 
+                      type="file" 
+                      name="licenseFile"
+                      required
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">صورة البطاقة الشخصية (الهوية)</label>
+                    <input 
+                      type="file" 
+                      name="idCardFile"
+                      required
+                      accept="image/*"
+                      onChange={handleFileChange}
+                      className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                    />
                   </div>
                 </div>
-
-                {trip.status === 'confirmed' && (
-                  <button onClick={handleScanQR} className="bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-lg w-full">
-                    مسح كود الاستلام QR
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {currentRole === 'admin' && (
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex-1">
-              <h2 className="font-bold text-slate-800 text-lg mb-4">لوحة المسؤول</h2>
-              {trip.paymentStatus === 'verification_pending' ? (
-                <button onClick={handleAdminApprovePayment} className="bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-lg">
-                  تأكيد مطابقة الإيداع عبر بنكك
-                </button>
-              ) : (
-                <p className="text-xs text-slate-400">لا يوجد إيداعات معلقة حالياً</p>
               )}
-            </div>
-          )}
-        </section>
+
+              <button 
+                type="submit"
+                disabled={loading}
+                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-2 mt-6"
+              >
+                {loading ? 'جاري إنشاء الحساب ورفع الملفات...' : 'إتمام التسجيل'}
+                <ArrowRight size={16} />
+              </button>
+            </form>
+          </div>
+        )}
+
+        {view === 'dashboard' && (
+          <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-md w-full text-center">
+            <CheckCircle size={54} className="mx-auto text-emerald-500 mb-4" />
+            <h2 className="text-xl font-bold text-slate-800 mb-2">مرحباً بك في المنصة!</h2>
+            <p className="text-xs text-slate-500 mb-6">تم تسجيل حسابك بنجاح وقاعدة البيانات استقبلت بياناتك ومستنداتك بنجاح.</p>
+            <button 
+              onClick={() => setView('register')} 
+              className="bg-slate-100 text-slate-700 font-bold text-xs px-4 py-2.5 rounded-xl"
+            >
+              تسجيل الخروج والعودة
+            </button>
+          </div>
+        )}
+
       </main>
     </div>
   );
