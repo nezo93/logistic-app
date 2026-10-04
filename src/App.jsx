@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Zap,
   Lock,
-  DollarSign
+  DollarSign,
+  Camera
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
@@ -36,12 +37,14 @@ export default function App() {
     password: '',
     vehicleType: 'medium', // light, medium, heavy
     licenseFile: null,
-    idCardFile: null
+    idCardFile: null,
+    selfieFile: null
   });
 
   // روابط المعاينة الفورية للصور
   const [licensePreview, setLicensePreview] = useState(null);
   const [idCardPreview, setIdCardPreview] = useState(null);
+  const [selfiePreview, setSelfiePreview] = useState(null);
 
   // التحقق من الجلسة عند فتح التطبيق
   useEffect(() => {
@@ -101,6 +104,9 @@ export default function App() {
     } else if (type === 'idCard') {
       setFormData(prev => ({ ...prev, idCardFile: file }));
       setIdCardPreview(URL.createObjectURL(file));
+    } else if (type === 'selfie') {
+      setFormData(prev => ({ ...prev, selfieFile: file }));
+      setSelfiePreview(URL.createObjectURL(file));
     }
   };
 
@@ -132,8 +138,8 @@ export default function App() {
     setErrorMsg('');
 
     try {
-      if (role === 'driver' && (!formData.licenseFile || !formData.idCardFile)) {
-        throw new Error('يرجى إرفاق صورة رخصة القيادة وصورة الهوية الشخصية للمتابعة.');
+      if (role === 'driver' && (!formData.licenseFile || !formData.idCardFile || !formData.selfieFile)) {
+        throw new Error('يرجى إرفاق صورة رخصة القيادة، الهوية الشخصية، وصورة السيلفي للمتابعة.');
       }
 
       // 1. التسجيل في نظام المصادقة
@@ -147,9 +153,11 @@ export default function App() {
 
       let licenseUrl = '';
       let idCardUrl = '';
+      let selfieUrl = '';
 
       // 2. رفع المستندات للسائق
       if (role === 'driver') {
+        // رفع الرخصة
         const licExt = formData.licenseFile.name.split('.').pop();
         const licPath = `${userId}_license.${licExt}`;
         const { error: licErr } = await supabase.storage.from('driver-documents').upload(licPath, formData.licenseFile, { upsert: true });
@@ -157,12 +165,21 @@ export default function App() {
         const { data: licRes } = supabase.storage.from('driver-documents').getPublicUrl(licPath);
         licenseUrl = licRes.publicUrl;
 
+        // رفع الهوية
         const idExt = formData.idCardFile.name.split('.').pop();
         const idPath = `${userId}_idcard.${idExt}`;
         const { error: idErr } = await supabase.storage.from('driver-documents').upload(idPath, formData.idCardFile, { upsert: true });
         if (idErr) throw idErr;
         const { data: idRes } = supabase.storage.from('driver-documents').getPublicUrl(idPath);
         idCardUrl = idRes.publicUrl;
+
+        // رفع السيلفي
+        const selfieExt = formData.selfieFile.name.split('.').pop();
+        const selfiePath = `${userId}_selfie.${selfieExt}`;
+        const { error: selfieErr } = await supabase.storage.from('driver-documents').upload(selfiePath, formData.selfieFile, { upsert: true });
+        if (selfieErr) throw selfieErr;
+        const { data: selfieRes } = supabase.storage.from('driver-documents').getPublicUrl(selfiePath);
+        selfieUrl = selfieRes.publicUrl;
       }
 
       // 3. حفظ بيانات الملف الشخصي
@@ -172,9 +189,10 @@ export default function App() {
         phone: formData.phone,
         email: formData.email,
         role: role,
-        is_verified: role === 'customer', // العميل يوثق فورا والسائق ينتظر المراجعة
+        is_verified: role === 'customer',
         license_url: licenseUrl,
-        id_card_url: idCardUrl
+        id_card_url: idCardUrl,
+        selfie_url: selfieUrl
       }]);
 
       if (profErr) throw profErr;
@@ -207,7 +225,11 @@ export default function App() {
       if (upErr) throw upErr;
       const { data: res } = supabase.storage.from('driver-documents').getPublicUrl(path);
       
-      const updateField = type === 'license' ? { license_url: res.publicUrl } : { id_card_url: res.publicUrl };
+      let updateField = {};
+      if (type === 'license') updateField = { license_url: res.publicUrl };
+      else if (type === 'idcard') updateField = { id_card_url: res.publicUrl };
+      else if (type === 'selfie') updateField = { selfie_url: res.publicUrl };
+
       await supabase.from('profiles').update(updateField).eq('id', profile.id);
       
       alert('تم تحديث المستند بنجاح وهو قيد المراجعة!');
@@ -240,12 +262,9 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" dir="rtl">
 
-      {/* ============================================================== */}
-      {/* 1. الصفحة الترحيبية (Landing Page)                             */}
-      {/* ============================================================== */}
+      {/* 1. الصفحة الترحيبية (Landing Page) */}
       {view === 'landing' && (
         <div className="flex-1 flex flex-col justify-between">
-          {/* شريط علوي بسيط */}
           <header className="max-w-6xl w-full mx-auto px-6 py-6 flex justify-between items-center">
             <div className="flex items-center gap-3">
               <div className="bg-sky-600 text-white p-2.5 rounded-2xl shadow-md shadow-sky-600/20">
@@ -261,7 +280,6 @@ export default function App() {
             </button>
           </header>
 
-          {/* البانر الترحيبي الرئيسي */}
           <main className="max-w-4xl mx-auto px-6 py-12 text-center flex flex-col items-center">
             <div className="inline-flex items-center gap-2 bg-sky-50 text-sky-700 px-4 py-1.5 rounded-full text-xs font-bold mb-6 border border-sky-100">
               <Zap size={14} className="text-sky-500" />
@@ -276,7 +294,6 @@ export default function App() {
               المنصة الأذكى والأكثر أماناً لنقل البضائع والمهمات بين المدن وداخلها. تفاوض مباشر، ضمان مالي معتمد عبر بنكك، وتوثيق رقمي يضمن حق الشاحن والناقل.
             </p>
 
-            {/* بطاقات المميزات الرئيسية */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full mb-10 text-right">
               <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm hover:border-sky-300 transition-all">
                 <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mb-3">
@@ -299,11 +316,10 @@ export default function App() {
                   <ShieldCheck size={20} />
                 </div>
                 <h3 className="font-bold text-slate-800 text-sm mb-1">سائقون موثقون رسمياً</h3>
-                <p className="text-xs text-slate-500 leading-normal">فحص ومطابقة دقيقة لرخص القيادة والهويات الشخصية قبل السماح بأي نقلة.</p>
+                <p className="text-xs text-slate-500 leading-normal">مطابقة ثلاثية (سيلفي، رخصة، وبطاقة قومية) قبل السماح بأي نقلة.</p>
               </div>
             </div>
 
-            {/* زر البدء */}
             <button 
               onClick={() => { setView('auth'); setAuthMode('register'); }}
               className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-sm px-8 py-4 rounded-2xl shadow-lg shadow-sky-600/25 transition-all flex items-center gap-3"
@@ -319,14 +335,11 @@ export default function App() {
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* 2. شاشات التسجيل والدخول (Auth Screens)                         */}
-      {/* ============================================================== */}
+      {/* 2. شاشات التسجيل والدخول (Auth Screens) */}
       {view === 'auth' && (
         <div className="flex-1 flex flex-col justify-center items-center p-4">
           <div className="max-w-md w-full bg-white p-8 rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/50">
             
-            {/* العودة للرئيسية */}
             <button 
               onClick={() => setView('landing')} 
               className="text-xs text-slate-400 hover:text-slate-700 font-bold mb-4 inline-flex items-center gap-1"
@@ -344,7 +357,6 @@ export default function App() {
               </p>
             </div>
 
-            {/* رسالة الخطأ */}
             {errorMsg && (
               <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs p-3 rounded-xl mb-4 font-bold flex items-center gap-2">
                 <AlertTriangle size={16} className="shrink-0" />
@@ -352,7 +364,6 @@ export default function App() {
               </div>
             )}
 
-            {/* تبديل نوع الحساب في حالة التسجيل */}
             {authMode === 'register' && (
               <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-2xl mb-5">
                 <button 
@@ -372,7 +383,6 @@ export default function App() {
               </div>
             )}
 
-            {/* النموذج */}
             <form onSubmit={authMode === 'register' ? handleRegister : handleLogin} className="space-y-4">
               
               {authMode === 'register' && (
@@ -449,11 +459,32 @@ export default function App() {
                 />
               </div>
 
-              {/* حقول رفع وتدقيق مستندات السائق مع المعاينة الفورية */}
+              {/* حقول رفع وتدقيق مستندات السائق (رخصة + هوية + سيلفي) */}
               {authMode === 'register' && role === 'driver' && (
                 <div className="space-y-4 pt-3 border-t border-slate-100">
                   <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-[11px] text-amber-800 leading-relaxed">
-                    ⚠️ يتطلب توثيق حساب السائق رفع صور واضحة لمطابقتها قبل تفعيل إمكانية قبول الرحلات.
+                    ⚠️ يتطلب توثيق حساب السائق مطابقة ثلاثية (سيلفي، رخصة، وهوية) لتفعيل الحساب.
+                  </div>
+
+                  {/* صورة شخصية سيلفي */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                      <Camera size={14} className="text-sky-600" />
+                      صورة شخصية واضحة للوجه (سيلفي)
+                    </label>
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      required
+                      onChange={(e) => handleFileChange(e, 'selfie')}
+                      className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-sky-50 file:text-sky-700 hover:file:bg-sky-100"
+                    />
+                    {selfiePreview && (
+                      <div className="mt-2 relative rounded-xl overflow-hidden border border-slate-200 h-28 bg-slate-100 flex items-center justify-center">
+                        <img src={selfiePreview} alt="معاينة السيلفي" className="h-full w-full object-cover" />
+                        <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded">معاينة السيلفي</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* رخصة القيادة */}
@@ -499,11 +530,10 @@ export default function App() {
                 disabled={actionLoading}
                 className="w-full bg-sky-600 hover:bg-sky-700 text-white font-extrabold py-3.5 rounded-2xl text-xs transition-all shadow-md shadow-sky-600/20 flex items-center justify-center gap-2 mt-4"
               >
-                {actionLoading ? 'جاري المعالجة...' : authMode === 'register' ? 'إنشاء الحساب والمتابعة' : 'تسجيل الدخول'}
+                {actionLoading ? 'جاري المعالجة ورفع الصور...' : authMode === 'register' ? 'إنشاء الحساب والمتابعة' : 'تسجيل الدخول'}
               </button>
             </form>
 
-            {/* التبديل بين التسجيل والدخول */}
             <div className="text-center mt-6 pt-4 border-t border-slate-100">
               {authMode === 'register' ? (
                 <p className="text-xs text-slate-500">
@@ -532,13 +562,10 @@ export default function App() {
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* 3. الشاشة الرئيسية ولوحة التحكم (Dashboard)                     */}
-      {/* ============================================================== */}
+      {/* 3. الشاشة الرئيسية ولوحة التحكم (Dashboard) */}
       {view === 'dashboard' && profile && (
         <div className="flex-1 flex flex-col">
           
-          {/* شريط علوي للوحة التحكم */}
           <header className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-30">
             <div className="max-w-6xl mx-auto flex justify-between items-center">
               <div className="flex items-center gap-3">
@@ -566,10 +593,9 @@ export default function App() {
             </div>
           </header>
 
-          {/* محتوى الشاشة بحسب حالة السائق أو العميل */}
           <main className="flex-1 max-w-4xl w-full mx-auto p-6 flex flex-col justify-center">
 
-            {/* أ- في حالة السائق المعلق (Driver Pending Verification) */}
+            {/* أ- في حالة السائق المعلق */}
             {profile.role === 'driver' && !profile.is_verified ? (
               <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm text-center">
                 <div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-amber-200">
@@ -579,10 +605,9 @@ export default function App() {
                 <h2 className="text-xl font-black text-slate-900 mb-2">مستنداتك قيد التدقيق والمراجعة</h2>
                 
                 <div className="bg-amber-50/60 border border-amber-200/80 p-4 rounded-2xl max-w-lg mx-auto mb-6 text-xs text-amber-900 leading-relaxed">
-                  مستنداتك قيد التدقيق لدى قسم العمليات، سيتم التحقق من رخصة القيادة والهوية الشخصية وتفعيل حسابك خلال 24 ساعة.
+                  مستنداتك قيد التدقيق لدى قسم العمليات، سيتم مطابقة السيلفي مع رخصة القيادة والهوية وتفعيل حسابك خلال 24 ساعة.
                 </div>
 
-                {/* أزرار العمليات المعطلة */}
                 <div className="flex flex-col sm:flex-row justify-center gap-3 mb-8 opacity-50 cursor-not-allowed">
                   <button disabled className="bg-slate-200 text-slate-500 font-bold text-xs px-6 py-3 rounded-xl">
                     البحث عن شحنات قريبة (معطل)
@@ -592,7 +617,7 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* إمكانية إعادة رفع المستندات في حال وجود خطأ */}
+                {/* إمكانية إعادة رفع المستندات الثلاثة */}
                 <div className="border-t border-slate-100 pt-6 max-w-md mx-auto text-right">
                   <p className="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1">
                     <RefreshCw size={14} className="text-sky-600" />
@@ -601,9 +626,17 @@ export default function App() {
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <span className="text-xs text-slate-600">الصورة الشخصية (سيلفي)</span>
+                      <label className="bg-white border border-slate-300 hover:border-sky-500 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-all">
+                        تعديل
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleReuploadDoc(e.target.files[0], 'selfie')} />
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
                       <span className="text-xs text-slate-600">رخصة القيادة</span>
                       <label className="bg-white border border-slate-300 hover:border-sky-500 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-all">
-                        تعديل الملف
+                        تعديل
                         <input type="file" accept="image/*" className="hidden" onChange={(e) => handleReuploadDoc(e.target.files[0], 'license')} />
                       </label>
                     </div>
@@ -611,8 +644,8 @@ export default function App() {
                     <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-200">
                       <span className="text-xs text-slate-600">الهوية الشخصية</span>
                       <label className="bg-white border border-slate-300 hover:border-sky-500 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-all">
-                        تعديل الملف
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleReuploadDoc(e.target.files[0], 'idCard')} />
+                        تعديل
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleReuploadDoc(e.target.files[0], 'idcard')} />
                       </label>
                     </div>
                   </div>
@@ -620,7 +653,7 @@ export default function App() {
 
               </div>
             ) : (
-              /* ب- في حالة العميل أو السائق المعتمد (Active Dashboard) */
+              /* ب- في حالة العميل أو السائق المعتمد */
               <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm text-center">
                 <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-emerald-200">
                   <CheckCircle size={32} />
