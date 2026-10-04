@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   ShieldAlert, 
   RefreshCw, 
-  Eye, 
   ZoomIn, 
   Send, 
   UserCheck, 
@@ -19,9 +18,28 @@ import {
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
+// أيكونة العين المباشرة لضمان عدم حدوث خطأ Import
+const EyeIcon = ({ size = 16, className = "" }) => (
+  <svg 
+    xmlns="http://www.w3.org/2000/svg" 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
 export default function AdminDashboard({ onNavigate }) {
   const [driversList, setDriversList] = useState([]);
-  const [adminTab, setAdminTab] = useState('pending'); // pending, approved, rejected
+  const [adminTab, setAdminTab] = useState('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [selectedRejectTemplate, setSelectedRejectTemplate] = useState('');
@@ -180,7 +198,6 @@ export default function AdminDashboard({ onNavigate }) {
   return (
     <div className="flex-1 flex flex-col bg-slate-100 min-h-screen" dir="rtl">
       
-      {/* شريط التنقل العلوي */}
       <header className="bg-slate-900 text-white px-6 py-4 sticky top-0 z-30 shadow-md">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
@@ -211,10 +228,8 @@ export default function AdminDashboard({ onNavigate }) {
         </div>
       </header>
 
-      {/* المحتوى الرئيسي */}
       <main className="flex-1 max-w-6xl w-full mx-auto p-6 space-y-6">
         
-        {/* بطاقات الإحصائيات السريعة */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <button 
             onClick={() => setAdminTab('pending')} 
@@ -250,7 +265,6 @@ export default function AdminDashboard({ onNavigate }) {
           </button>
         </div>
 
-        {/* شريط البحث والتبويبات */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between gap-4 items-center">
           <div className="flex bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
             <button 
@@ -285,7 +299,6 @@ export default function AdminDashboard({ onNavigate }) {
           </div>
         </div>
 
-        {/* جدول السائقين */}
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
@@ -344,7 +357,7 @@ export default function AdminDashboard({ onNavigate }) {
                           onClick={() => { setSelectedDriver(d); setShowRejectBox(false); }} 
                           className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm"
                         >
-                          <Eye size={14} />
+                          <EyeIcon size={14} />
                           <span>معاينة</span>
                         </button>
                       </td>
@@ -357,7 +370,7 @@ export default function AdminDashboard({ onNavigate }) {
         </div>
       </main>
 
-      {/* Modal نافذة المعاينة المنبثقة للمطابقة الثلاثية */}
+      {/* Modal المعاينة المنبثقة */}
       {selectedDriver && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white max-w-5xl w-full max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
