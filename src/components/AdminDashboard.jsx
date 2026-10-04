@@ -155,7 +155,6 @@ export default function AdminDashboard({ onNavigate }) {
     window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
   };
 
-  // تصفية السائقين حسب التبويب والبحث
   const filteredDrivers = driversList.filter((d) => {
     const matchesTab = 
       adminTab === 'pending' 
