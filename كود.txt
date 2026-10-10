@@ -1,1066 +1,1534 @@
-import os
-import json
-import sqlite3
-from pathlib import Path
-from datetime import datetime
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
 
-import requests
-from flask import Flask, request, jsonify, render_template
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>مساعد الذكاء الاصطناعي</title>
+
+    <style>
+        :root {
+            --bg: #0b1120;
+            --panel: #111a2d;
+            --panel2: #18243b;
+            --border: #2a3853;
+            --text: #edf2ff;
+            --muted: #9eacc5;
+            --accent: #6d8cff;
+            --danger: #ff7070;
+            --success: #4bd7a1;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Arial, Tahoma, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        button,
+        input,
+        select,
+        textarea {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        .app {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* SIDEBAR */
+
+        .sidebar {
+            width: 280px;
+            min-width: 280px;
+            background: var(--panel);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            gap: 14px;
+        }
+
+        .brand {
+            font-size: 20px;
+            font-weight: bold;
+            padding: 8px 2px;
+        }
+
+        .brand span {
+            color: var(--accent);
+        }
+
+        .primary-button {
+            background: var(--accent);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            padding: 12px;
+            font-weight: bold;
+        }
+
+        .secondary-button {
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 9px;
+            padding: 10px;
+        }
+
+        .conversation-heading {
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 4px;
+        }
+
+        .conversation-list {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .conversation-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px;
+            border-radius: 9px;
+            background: transparent;
+            border: 1px solid transparent;
+        }
+
+        .conversation-item.active {
+            background: var(--panel2);
+            border-color: var(--border);
+        }
+
+        .conversation-title {
+            flex: 1;
+            min-width: 0;
+            color: var(--text);
+            background: transparent;
+            border: none;
+            text-align: right;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 5px 0;
+        }
+
+        .delete-button {
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            padding: 5px;
+        }
+
+        .delete-button:hover {
+            color: var(--danger);
+        }
+
+        .sidebar-bottom {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        /* MAIN */
+
+        .main {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            height: 100%;
+        }
+
+        .topbar {
+            padding: 14px 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .topbar-title {
+            font-weight: bold;
+            margin-left: auto;
+        }
+
+        select,
+        input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px;
+            outline: none;
+            min-width: 0;
+        }
+
+        select:focus,
+        input:focus,
+        textarea:focus {
+            border-color: var(--accent);
+        }
+
+        #provider {
+            min-width: 145px;
+        }
+
+        #model {
+            min-width: 180px;
+            max-width: 320px;
+        }
+
+        .status {
+            color: var(--muted);
+            font-size: 12px;
+            width: 100%;
+        }
+
+        /* CHAT */
+
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 22px 16px;
+            scroll-behavior: smooth;
+        }
+
+        .chat-inner {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .welcome {
+            text-align: center;
+            padding: 70px 10px 30px;
+        }
+
+        .welcome h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .welcome p {
+            color: var(--muted);
+            line-height: 1.8;
+        }
+
+        .message {
+            margin-bottom: 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .message-header {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .message-content {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            padding: 14px 16px;
+            border-radius: 12px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .message.user .message-content {
+            background: #1a2b4b;
+        }
+
+        .message.assistant .message-content {
+            background: #101a2b;
+        }
+
+        .message.error .message-content {
+            border-color: #793b49;
+            color: #ffb5b5;
+        }
+
+        .notice {
+            color: #e6cb8b;
+            font-size: 12px;
+            line-height: 1.6;
+            padding: 0 3px;
+        }
+
+        /* INPUT */
+
+        .composer-area {
+            border-top: 1px solid var(--border);
+            background: var(--panel);
+            padding: 14px 16px 18px;
+        }
+
+        .composer-inner {
+            max-width: 900px;
+            margin: auto;
+        }
+
+        .composer {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            background: var(--bg);
+            padding: 10px;
+        }
+
+        textarea {
+            flex: 1;
+            min-height: 45px;
+            max-height: 180px;
+            resize: vertical;
+            background: transparent;
+            color: var(--text);
+            border: none;
+            outline: none;
+            padding: 10px 4px;
+            line-height: 1.6;
+            width: 100%;
+        }
+
+        textarea:focus {
+            border: none;
+        }
+
+        .send-button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 9px;
+            padding: 12px 18px;
+            min-width: 75px;
+        }
+
+        .send-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .footer-note {
+            color: var(--muted);
+            font-size: 11px;
+            text-align: center;
+            margin-top: 9px;
+        }
+
+        /* SETTINGS MODAL */
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            z-index: 100;
+        }
+
+        .modal-backdrop.open {
+            display: flex;
+        }
+
+        .modal {
+            width: 100%;
+            max-width: 550px;
+            max-height: 90vh;
+            overflow-y: auto;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 22px;
+        }
+
+        .modal h2 {
+            margin-top: 0;
+        }
+
+        .modal-description {
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        .key-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 18px 0;
+        }
+
+        .key-group label {
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .key-group input {
+            width: 100%;
+        }
+
+        .key-link {
+            color: #9cb1ff;
+            font-size: 13px;
+            text-decoration: none;
+        }
+
+        .key-link:hover {
+            text-decoration: underline;
+        }
+
+        .key-status {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .key-status.saved {
+            color: var(--success);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 9px;
+            margin-top: 20px;
+        }
+
+        .modal-actions button {
+            flex: 1;
+        }
+
+        .modal-message {
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .modal-message.error {
+            color: var(--danger);
+        }
+
+        .modal-message.success {
+            color: var(--success);
+        }
+
+        /* MOBILE */
+
+        .mobile-menu {
+            display: none;
+        }
+
+        @media (max-width: 760px) {
+            .sidebar {
+                position: fixed;
+                top: 0;
+                bottom: 0;
+                right: 0;
+                z-index: 20;
+                transform: translateX(100%);
+                transition: transform 0.2s ease;
+                box-shadow: none;
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+                box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.55);
+            }
+
+            .mobile-menu {
+                display: inline-block;
+            }
+
+            .topbar {
+                padding: 12px;
+            }
+
+            #provider,
+            #model {
+                flex: 1;
+                min-width: 120px;
+                max-width: none;
+            }
+
+            .topbar-title {
+                width: 100%;
+                margin: 0;
+            }
+
+            .welcome {
+                padding-top: 45px;
+            }
+
+            .welcome h1 {
+                font-size: 23px;
+            }
+
+            .chat-area {
+                padding: 16px 12px;
+            }
+
+            .composer-area {
+                padding: 10px;
+            }
+
+            .send-button {
+                padding: 12px;
+                min-width: 60px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- SIDEBAR -->
+
+    <aside class="sidebar" id="sidebar">
+
+        <div class="brand">
+            AI <span>Assistant</span>
+        </div>
+
+        <button
+            class="primary-button"
+            onclick="newConversation()"
+        >
+            + محادثة جديدة
+        </button>
+
+        <div class="conversation-heading">
+            المحادثات السابقة
+        </div>
+
+        <div
+            class="conversation-list"
+            id="conversationList"
+        ></div>
+
+        <div class="sidebar-bottom">
+
+            <button
+                class="secondary-button"
+                onclick="openSettings()"
+            >
+                ⚙ إعدادات API
+            </button>
+
+            <button
+                class="secondary-button"
+                onclick="loadConversations()"
+            >
+                ↻ تحديث المحادثات
+            </button>
+
+        </div>
+
+    </aside>
 
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
+    <!-- MAIN -->
 
-BASE_DIR = Path(__file__).resolve().parent
+    <main class="main">
 
-DB_PATH = BASE_DIR / "assistant.db"
-KEYS_PATH = BASE_DIR / "api_keys.json"
+        <header class="topbar">
 
-app = Flask(__name__)
+            <button
+                class="secondary-button mobile-menu"
+                onclick="toggleSidebar()"
+                aria-label="القائمة"
+            >
+                ☰
+            </button>
 
-app.config["JSON_AS_ASCII"] = False
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+            <div class="topbar-title">
+                مساعد الذكاء الاصطناعي
+            </div>
 
+            <select
+                id="provider"
+                onchange="providerChanged()"
+                aria-label="مزود الذكاء الاصطناعي"
+            >
+                <option value="gemini">
+                    Google Gemini
+                </option>
 
-# =========================================================
-# PROVIDERS
-# =========================================================
+                <option value="openrouter">
+                    OpenRouter
+                </option>
 
-PROVIDERS = {
-    "gemini": {
-        "name": "Google Gemini",
-        "key_name": "gemini",
-    },
-    "openrouter": {
-        "name": "OpenRouter",
-        "key_name": "openrouter",
-        "base_url": "https://openrouter.ai/api/v1",
-    },
-    "groq": {
-        "name": "Groq",
-        "key_name": "groq",
-        "base_url": "https://api.groq.com/openai/v1",
-    },
-    "deepseek": {
-        "name": "DeepSeek",
-        "key_name": "deepseek",
-        "base_url": "https://api.deepseek.com",
-    },
-}
+                <option value="groq">
+                    Groq
+                </option>
 
+                <option value="deepseek">
+                    DeepSeek API
+                </option>
+            </select>
 
-# Explicit allowlist of models intended for free-tier use.
-# Availability, quotas, and model names may change.
-#
-# These lists are deliberately conservative.
-# If a model disappears from a provider, it will not be returned.
+            <select
+                id="model"
+                aria-label="الموديل"
+            >
+                <option value="">
+                    اختر الموديل
+                </option>
+            </select>
 
-GEMINI_FREE_ALLOWLIST = {
-    "gemini-2.5-flash-lite",
-}
+            <div
+                class="status"
+                id="modelStatus"
+            >
+                جارٍ تحميل الموديلات...
+            </div>
 
-GROQ_FREE_ALLOWLIST = {
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
-    "qwen/qwen3-32b",
-}
+            <div
+                class="notice"
+                id="providerNotice"
+            ></div>
 
-
-# =========================================================
-# DATABASE
-# =========================================================
-
-def get_db():
-    connection = sqlite3.connect(DB_PATH, timeout=30)
-    connection.row_factory = sqlite3.Row
-
-    connection.execute("PRAGMA foreign_keys = ON")
-
-    return connection
+        </header>
 
 
-def init_db():
-    with get_db() as db:
+        <!-- CHAT AREA -->
 
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL DEFAULT 'محادثة جديدة',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
+        <section
+            class="chat-area"
+            id="chatArea"
+        >
 
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                provider TEXT,
-                model TEXT,
-                created_at TEXT NOT NULL,
+            <div
+                class="chat-inner"
+                id="messages"
+            >
 
-                FOREIGN KEY (conversation_id)
-                    REFERENCES conversations(id)
-                    ON DELETE CASCADE
-            )
-        """)
+                <div class="welcome" id="welcome">
 
-        db.execute("""
-            CREATE INDEX IF NOT EXISTS
-            idx_messages_conversation
-            ON messages(conversation_id, id)
-        """)
+                    <h1>مرحبًا بك 👋</h1>
 
-        db.commit()
+                    <p>
+                        اختر مزود الذكاء الاصطناعي والموديل،
+                        ثم ابدأ محادثتك.
+                    </p>
+
+                    <p>
+                        تُحفظ المحادثات محليًا في قاعدة البيانات.
+                    </p>
+
+                </div>
+
+            </div>
+
+        </section>
 
 
-init_db()
+        <!-- COMPOSER -->
+
+        <footer class="composer-area">
+
+            <div class="composer-inner">
+
+                <div class="composer">
+
+                    <textarea
+                        id="messageInput"
+                        placeholder="اكتب رسالتك هنا..."
+                        rows="1"
+                        aria-label="الرسالة"
+                    ></textarea>
+
+                    <button
+                        class="send-button"
+                        id="sendButton"
+                        onclick="sendMessage()"
+                    >
+                        إرسال
+                    </button>
+
+                </div>
+
+                <div class="footer-note">
+                    قد تختلف الموديلات المجانية وحدود استخدامها
+                    حسب المزود وحسابك.
+                </div>
+
+            </div>
+
+        </footer>
+
+    </main>
+
+</div>
 
 
-# =========================================================
-# API KEY STORAGE
-# =========================================================
+<!-- SETTINGS MODAL -->
 
-def load_keys():
-    keys = {
-        "gemini": "",
-        "openrouter": "",
-        "groq": "",
-        "deepseek": "",
+<div
+    class="modal-backdrop"
+    id="settingsModal"
+    onclick="handleBackdropClick(event)"
+>
+
+    <div
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settingsTitle"
+    >
+
+        <h2 id="settingsTitle">
+            إعدادات مفاتيح API
+        </h2>
+
+        <p class="modal-description">
+            أدخل مفاتيحك لحفظها محليًا على جهازك.
+            لا تُعرض المفاتيح المحفوظة مرة أخرى في المتصفح.
+            ترك الحقل فارغًا يُبقي المفتاح المحفوظ دون تغيير.
+        </p>
+
+
+        <div class="key-group">
+
+            <label for="geminiKey">
+                Google Gemini API Key
+            </label>
+
+            <input
+                type="password"
+                id="geminiKey"
+                placeholder="أدخل مفتاح Gemini"
+                autocomplete="off"
+                spellcheck="false"
+            >
+
+            <a
+                class="key-link"
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                الحصول على مفتاح Gemini
+            </a>
+
+            <span
+                class="key-status"
+                id="geminiStatus"
+            >
+                لم يتم التحقق
+            </span>
+
+        </div>
+
+
+        <div class="key-group">
+
+            <label for="openrouterKey">
+                OpenRouter API Key
+            </label>
+
+            <input
+                type="password"
+                id="openrouterKey"
+                placeholder="أدخل مفتاح OpenRouter"
+                autocomplete="off"
+                spellcheck="false"
+            >
+
+            <a
+                class="key-link"
+                href="https://openrouter.ai/keys"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                الحصول على مفتاح OpenRouter
+            </a>
+
+            <span
+                class="key-status"
+                id="openrouterStatus"
+            >
+                لم يتم التحقق
+            </span>
+
+        </div>
+
+
+        <div class="key-group">
+
+            <label for="groqKey">
+                Groq API Key
+            </label>
+
+            <input
+                type="password"
+                id="groqKey"
+                placeholder="أدخل مفتاح Groq"
+                autocomplete="off"
+                spellcheck="false"
+            >
+
+            <a
+                class="key-link"
+                href="https://console.groq.com/keys"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                الحصول على مفتاح Groq
+            </a>
+
+            <span
+                class="key-status"
+                id="groqStatus"
+            >
+                لم يتم التحقق
+            </span>
+
+        </div>
+
+
+        <div class="key-group">
+
+            <label for="deepseekKey">
+                DeepSeek API Key
+            </label>
+
+            <input
+                type="password"
+                id="deepseekKey"
+                placeholder="أدخل مفتاح DeepSeek"
+                autocomplete="off"
+                spellcheck="false"
+            >
+
+            <a
+                class="key-link"
+                href="https://platform.deepseek.com/api_keys"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                الحصول على مفتاح DeepSeek
+            </a>
+
+            <span
+                class="key-status"
+                id="deepseekStatus"
+            >
+                لم يتم التحقق
+            </span>
+
+        </div>
+
+
+        <div class="modal-actions">
+
+            <button
+                class="primary-button"
+                onclick="saveKeys()"
+                id="saveKeysButton"
+            >
+                حفظ المفاتيح
+            </button>
+
+            <button
+                class="secondary-button"
+                onclick="closeSettings()"
+            >
+                إغلاق
+            </button>
+
+        </div>
+
+        <div
+            class="modal-message"
+            id="settingsMessage"
+        ></div>
+
+    </div>
+
+</div>
+
+
+<script>
+    // =====================================================
+    // STATE
+    // =====================================================
+
+    let currentConversationId = null;
+    let isSending = false;
+
+    const providerNames = {
+        gemini: "Google Gemini",
+        openrouter: "OpenRouter",
+        groq: "Groq",
+        deepseek: "DeepSeek API"
+    };
+
+    const keyInputIds = {
+        gemini: "geminiKey",
+        openrouter: "openrouterKey",
+        groq: "groqKey",
+        deepseek: "deepseekKey"
+    };
+
+    const keyStatusIds = {
+        gemini: "geminiStatus",
+        openrouter: "openrouterStatus",
+        groq: "groqStatus",
+        deepseek: "deepseekStatus"
+    };
+
+
+    // =====================================================
+    // HELPERS
+    // =====================================================
+
+    async function apiFetch(url, options = {}) {
+        const response = await fetch(url, {
+            ...options,
+            headers: {
+                ...(options.body ? {
+                    "Content-Type": "application/json"
+                } : {}),
+                ...(options.headers || {})
+            }
+        });
+
+        let data;
+
+        try {
+            data = await response.json();
+        } catch {
+            throw new Error("استجابة غير صالحة من الخادم.");
+        }
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || "حدث خطأ أثناء الاتصال بالخادم."
+            );
+        }
+
+        return data;
     }
 
-    if KEYS_PATH.exists():
-        try:
-            with open(KEYS_PATH, "r", encoding="utf-8") as file:
-                saved = json.load(file)
 
-            if isinstance(saved, dict):
-                for provider in keys:
-                    value = saved.get(provider, "")
-                    if isinstance(value, str):
-                        keys[provider] = value.strip()
-
-        except (OSError, json.JSONDecodeError):
-            pass
-
-    # Environment variables override saved keys.
-    environment_names = {
-        "gemini": "GEMINI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "groq": "GROQ_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
     }
 
-    for provider, environment_name in environment_names.items():
-        environment_value = os.getenv(environment_name, "").strip()
 
-        if environment_value:
-            keys[provider] = environment_value
+    function scrollToBottom() {
+        const chatArea = document.getElementById("chatArea");
 
-    return keys
-
-
-def save_keys(keys):
-    # Store only supported providers.
-    safe_keys = {
-        provider: str(keys.get(provider, "")).strip()
-        for provider in PROVIDERS
+        chatArea.scrollTop = chatArea.scrollHeight;
     }
 
-    temporary_path = KEYS_PATH.with_suffix(".tmp")
 
-    with open(temporary_path, "w", encoding="utf-8") as file:
-        json.dump(
-            safe_keys,
-            file,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    temporary_path.replace(KEYS_PATH)
-
-    # Restrict permissions where supported.
-    try:
-        os.chmod(KEYS_PATH, 0o600)
-    except OSError:
-        pass
-
-
-def get_api_key(provider):
-    if provider not in PROVIDERS:
-        raise ValueError("مزود الخدمة غير معروف.")
-
-    keys = load_keys()
-    api_key = keys.get(provider, "").strip()
-
-    if not api_key:
-        raise ValueError(
-            f"أضف مفتاح API الخاص بـ {PROVIDERS[provider]['name']} أولًا."
-        )
-
-    return api_key
-
-
-# =========================================================
-# HTTP HELPERS
-# =========================================================
-
-def request_json(
-    method,
-    url,
-    *,
-    headers=None,
-    params=None,
-    body=None,
-    timeout=60,
-):
-    try:
-        response = requests.request(
-            method=method,
-            url=url,
-            headers=headers,
-            params=params,
-            json=body,
-            timeout=timeout,
-        )
-
-    except requests.Timeout:
-        raise RuntimeError("انتهت مهلة الاتصال بمزود الذكاء الاصطناعي.")
-
-    except requests.RequestException as error:
-        raise RuntimeError(f"تعذر الاتصال بالمزود: {error}")
-
-    if not response.ok:
-        message = response.text[:1500]
-
-        try:
-            error_data = response.json()
-            message = json.dumps(
-                error_data,
-                ensure_ascii=False,
-            )[:1500]
-        except ValueError:
-            pass
-
-        raise RuntimeError(
-            f"خطأ من المزود ({response.status_code}): {message}"
-        )
-
-    try:
-        return response.json()
-
-    except ValueError:
-        raise RuntimeError("أعاد المزود استجابة غير صالحة.")
-
-
-# =========================================================
-# GEMINI MODELS
-# =========================================================
-
-def get_gemini_models(api_key):
-    url = (
-        "https://generativelanguage.googleapis.com/"
-        "v1beta/models"
-    )
-
-    data = request_json(
-        "GET",
-        url,
-        params={"key": api_key},
-        timeout=30,
-    )
-
-    models = []
-
-    for model in data.get("models", []):
-        name = model.get("name", "").replace("models/", "")
-
-        supported_methods = model.get(
-            "supportedGenerationMethods",
-            [],
-        )
-
-        if (
-            name in GEMINI_FREE_ALLOWLIST
-            and "generateContent" in supported_methods
-        ):
-            models.append({
-                "id": name,
-                "name": name,
-            })
-
-    return sorted(models, key=lambda item: item["name"])
-
-
-# =========================================================
-# OPENROUTER MODELS
-# =========================================================
-
-def get_openrouter_models(api_key):
-    url = "https://openrouter.ai/api/v1/models"
-
-    data = request_json(
-        "GET",
-        url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-        },
-        timeout=30,
-    )
-
-    models = []
-
-    for model in data.get("data", []):
-        model_id = model.get("id", "")
-
-        pricing = model.get("pricing", {})
-
-        if not model_id:
-            continue
-
-        # Explicit free model IDs.
-        is_free_id = model_id.endswith(":free")
-
-        # Check whether the provider explicitly reports zero pricing.
-        is_zero_priced = False
-
-        try:
-            prompt_price = float(pricing.get("prompt", -1))
-            completion_price = float(pricing.get("completion", -1))
-
-            is_zero_priced = (
-                prompt_price == 0
-                and completion_price == 0
-            )
-        except (TypeError, ValueError):
-            pass
-
-        if is_free_id or is_zero_priced:
-            models.append({
-                "id": model_id,
-                "name": model.get("name", model_id),
-            })
-
-    # Optional free router, when supported.
-    # It is listed as a free route rather than a specific model.
-    if not any(
-        model["id"] == "openrouter/free"
-        for model in models
-    ):
-        models.insert(0, {
-            "id": "openrouter/free",
-            "name": "OpenRouter Free Router",
-        })
-
-    models.sort(
-        key=lambda item: (
-            item["id"] != "openrouter/free",
-            item["name"].lower(),
-        )
-    )
-
-    return models
-
-
-# =========================================================
-# GROQ MODELS
-# =========================================================
-
-def get_groq_models(api_key):
-    url = "https://api.groq.com/openai/v1/models"
-
-    data = request_json(
-        "GET",
-        url,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-        },
-        timeout=30,
-    )
-
-    models = []
-
-    for model in data.get("data", []):
-        model_id = model.get("id", "")
-
-        if model_id in GROQ_FREE_ALLOWLIST:
-            models.append({
-                "id": model_id,
-                "name": model_id,
-            })
-
-    return sorted(models, key=lambda item: item["name"])
-
-
-# =========================================================
-# DEEPSEEK MODELS
-# =========================================================
-
-def get_deepseek_models(api_key):
-    # Direct DeepSeek API models are not assumed to be free.
-    # Do not display paid models in free-only mode.
-    #
-    # DeepSeek models may be available through OpenRouter's
-    # free endpoints when those endpoints list them as free.
-
-    return []
-
-
-# =========================================================
-# MODEL LIST ROUTING
-# =========================================================
-
-def fetch_models(provider, api_key):
-    if provider == "gemini":
-        return get_gemini_models(api_key)
-
-    if provider == "openrouter":
-        return get_openrouter_models(api_key)
-
-    if provider == "groq":
-        return get_groq_models(api_key)
-
-    if provider == "deepseek":
-        return get_deepseek_models(api_key)
-
-    raise ValueError("مزود الخدمة غير معروف.")
-
-
-def is_allowed_model(provider, model):
-    if not isinstance(model, str) or not model:
-        return False
-
-    if provider == "gemini":
-        return model in GEMINI_FREE_ALLOWLIST
-
-    if provider == "openrouter":
-        return (
-            model == "openrouter/free"
-            or model.endswith(":free")
-        )
-
-    if provider == "groq":
-        return model in GROQ_FREE_ALLOWLIST
-
-    if provider == "deepseek":
-        return False
-
-    return False
-
-
-# =========================================================
-# CHAT COMPLETION
-# =========================================================
-
-def call_gemini(api_key, model, messages):
-    url = (
-        "https://generativelanguage.googleapis.com/"
-        f"v1beta/models/{model}:generateContent"
-    )
-
-    contents = []
-
-    for message in messages:
-        role = message.get("role")
-        content = message.get("content", "")
-
-        if role not in ("user", "assistant"):
-            continue
-
-        if not isinstance(content, str) or not content:
-            continue
-
-        contents.append({
-            "role": "model" if role == "assistant" else "user",
-            "parts": [
-                {"text": content}
-            ],
-        })
-
-    if not contents:
-        raise RuntimeError("لا توجد رسائل لإرسالها إلى Gemini.")
-
-    data = request_json(
-        "POST",
-        url,
-        params={"key": api_key},
-        body={
-            "contents": contents,
-            "generationConfig": {
-                "temperature": 0.7,
-            },
-        },
-        timeout=120,
-    )
-
-    candidates = data.get("candidates", [])
-
-    if not candidates:
-        raise RuntimeError(
-            "لم يُرجع Gemini إجابة. تحقق من المفتاح والموديل."
-        )
-
-    parts = candidates[0].get(
-        "content", {}
-    ).get("parts", [])
-
-    answer = "\n".join(
-        part.get("text", "")
-        for part in parts
-        if part.get("text")
-    )
-
-    if not answer.strip():
-        raise RuntimeError("أعاد Gemini إجابة فارغة.")
-
-    return answer
-
-
-def call_compatible_api(provider, api_key, model, messages):
-    base_url = PROVIDERS[provider]["base_url"]
-
-    url = base_url.rstrip("/") + "/chat/completions"
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
+    function showWelcome() {
+        const messages = document.getElementById("messages");
+
+        messages.innerHTML = `
+            <div class="welcome" id="welcome">
+                <h1>مرحبًا بك 👋</h1>
+
+                <p>
+                    اختر مزود الذكاء الاصطناعي والموديل،
+                    ثم ابدأ محادثتك.
+                </p>
+
+                <p>
+                    تُحفظ المحادثات محليًا في قاعدة البيانات.
+                </p>
+            </div>
+        `;
     }
 
-    if provider == "openrouter":
-        headers["HTTP-Referer"] = "http://localhost:5000"
-        headers["X-Title"] = "Local AI Assistant"
 
-    data = request_json(
-        "POST",
-        url,
-        headers=headers,
-        body={
-            "model": model,
-            "messages": messages,
-            "temperature": 0.7,
-        },
-        timeout=120,
-    )
+    function addMessage(role, content, options = {}) {
+        const messages = document.getElementById("messages");
 
-    choices = data.get("choices", [])
+        const welcome = document.getElementById("welcome");
 
-    if not choices:
-        raise RuntimeError("لم يُرجع المزود إجابة.")
+        if (welcome) {
+            welcome.remove();
+        }
 
-    message = choices[0].get("message", {})
-    content = message.get("content", "")
+        const message = document.createElement("div");
 
-    if isinstance(content, list):
-        content = "\n".join(
-            item.get("text", "")
-            for item in content
-            if isinstance(item, dict)
-        )
+        message.className = `message ${role}`;
 
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("أعاد المزود إجابة فارغة.")
+        const roleName = role === "user"
+            ? "أنت"
+            : role === "error"
+                ? "خطأ"
+                : "المساعد";
 
-    return content
+        const metadata = options.provider
+            ? `${providerNames[options.provider] || options.provider}`
+              + (options.model ? ` · ${options.model}` : "")
+            : "";
 
+        const header = document.createElement("div");
 
-def call_model(provider, model, messages):
-    if provider not in PROVIDERS:
-        raise ValueError("مزود الخدمة غير معروف.")
+        header.className = "message-header";
 
-    if not is_allowed_model(provider, model):
-        raise ValueError(
-            "هذا الموديل غير موجود في قائمة الموديلات المجانية المسموح بها."
-        )
+        header.textContent = metadata
+            ? `${roleName} — ${metadata}`
+            : roleName;
 
-    api_key = get_api_key(provider)
+        const body = document.createElement("div");
 
-    if provider == "gemini":
-        return call_gemini(api_key, model, messages)
+        body.className = "message-content";
 
-    if provider in ("openrouter", "groq"):
-        return call_compatible_api(
-            provider,
-            api_key,
-            model,
-            messages,
-        )
+        // Use textContent to prevent HTML injection.
+        body.textContent = content;
 
-    if provider == "deepseek":
-        raise RuntimeError(
-            "لا توجد موديلات مجانية مؤكدة في وضع DeepSeek API المباشر. "
-            "جرّب البحث عن موديل DeepSeek مجاني عبر OpenRouter."
-        )
+        message.appendChild(header);
+        message.appendChild(body);
 
-    raise ValueError("مزود الخدمة غير مدعوم.")
+        messages.appendChild(message);
 
+        scrollToBottom();
 
-# =========================================================
-# CONVERSATION HELPERS
-# =========================================================
-
-def create_conversation(title="محادثة جديدة"):
-    now = datetime.now().isoformat(timespec="seconds")
-
-    with get_db() as db:
-        cursor = db.execute(
-            """
-            INSERT INTO conversations
-            (title, created_at, updated_at)
-            VALUES (?, ?, ?)
-            """,
-            (title, now, now),
-        )
-
-        db.commit()
-
-        return cursor.lastrowid
-
-
-def conversation_exists(conversation_id):
-    with get_db() as db:
-        row = db.execute(
-            "SELECT id FROM conversations WHERE id = ?",
-            (conversation_id,),
-        ).fetchone()
-
-    return row is not None
-
-
-def save_message(
-    conversation_id,
-    role,
-    content,
-    provider=None,
-    model=None,
-):
-    now = datetime.now().isoformat(timespec="seconds")
-
-    with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO messages
-            (
-                conversation_id,
-                role,
-                content,
-                provider,
-                model,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                conversation_id,
-                role,
-                content,
-                provider,
-                model,
-                now,
-            ),
-        )
-
-        db.execute(
-            """
-            UPDATE conversations
-            SET updated_at = ?
-            WHERE id = ?
-            """,
-            (now, conversation_id),
-        )
-
-        # Use the first user message as the conversation title.
-        if role == "user":
-            row = db.execute(
-                """
-                SELECT title FROM conversations
-                WHERE id = ?
-                """,
-                (conversation_id,),
-            ).fetchone()
-
-            if row and row["title"] == "محادثة جديدة":
-                title = content.strip().replace("\n", " ")
-
-                if len(title) > 45:
-                    title = title[:45] + "..."
-
-                if title:
-                    db.execute(
-                        """
-                        UPDATE conversations
-                        SET title = ?
-                        WHERE id = ?
-                        """,
-                        (title, conversation_id),
-                    )
-
-        db.commit()
-
-
-def get_conversation_messages(conversation_id):
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT role, content, provider, model, created_at
-            FROM messages
-            WHERE conversation_id = ?
-            ORDER BY id ASC
-            """,
-            (conversation_id,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-# =========================================================
-# WEB PAGES
-# =========================================================
-
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-# =========================================================
-# PROVIDER / KEY API
-# =========================================================
-
-@app.route("/api/providers", methods=["GET"])
-def api_providers():
-    result = []
-
-    for provider, details in PROVIDERS.items():
-        result.append({
-            "id": provider,
-            "name": details["name"],
-        })
-
-    return jsonify({"providers": result})
-
-
-@app.route("/api/keys", methods=["GET"])
-def api_get_keys():
-    keys = load_keys()
-
-    # Never send the actual API keys to the browser.
-    result = {
-        provider: bool(keys.get(provider))
-        for provider in PROVIDERS
+        return message;
     }
 
-    return jsonify({"keys": result})
+
+    function setModelStatus(message) {
+        document.getElementById("modelStatus").textContent = message;
+    }
 
 
-@app.route("/api/keys", methods=["POST"])
-def api_save_keys():
-    data = request.get_json(silent=True) or {}
+    // =====================================================
+    // PROVIDERS AND MODELS
+    // =====================================================
 
-    current_keys = load_keys()
+    async function providerChanged() {
+        const provider = document.getElementById("provider").value;
 
-    for provider in PROVIDERS:
-        if provider not in data:
-            continue
+        const modelSelect = document.getElementById("model");
 
-        value = data[provider]
+        const notice = document.getElementById("providerNotice");
 
-        if not isinstance(value, str):
-            return jsonify({
-                "error": f"قيمة مفتاح {provider} غير صالحة."
-            }), 400
+        modelSelect.innerHTML = "";
 
-        value = value.strip()
+        modelSelect.disabled = true;
 
-        # Empty input keeps the existing key.
-        if value:
-            current_keys[provider] = value
+        notice.textContent = "";
 
-    try:
-        save_keys(current_keys)
+        setModelStatus("جارٍ تحميل الموديلات...");
 
-    except OSError as error:
-        return jsonify({
-            "error": f"تعذر حفظ المفاتيح: {error}"
-        }), 500
+        try {
+            const data = await apiFetch(
+                `/api/models/${encodeURIComponent(provider)}`
+            );
 
-    return jsonify({
-        "success": True,
-        "message": "تم حفظ المفاتيح.",
-        "keys": {
-            provider: bool(current_keys.get(provider))
-            for provider in PROVIDERS
-        },
-    })
+            if (data.notice) {
+                notice.textContent = data.notice;
+            }
 
+            const models = data.models || [];
 
-@app.route("/api/models/<provider>", methods=["GET"])
-def api_models(provider):
-    if provider not in PROVIDERS:
-        return jsonify({
-            "error": "مزود الخدمة غير معروف."
-        }), 404
+            if (models.length === 0) {
+                modelSelect.innerHTML = "";
 
-    try:
-        api_key = get_api_key(provider)
+                const option = document.createElement("option");
 
-        models = fetch_models(provider, api_key)
+                option.value = "";
+                option.textContent = "لا توجد موديلات متاحة";
 
-        notice = None
+                modelSelect.appendChild(option);
 
-        if provider == "deepseek":
-            notice = (
-                "وضع المجاني فقط: لا توجد موديلات مجانية مؤكدة "
-                "لواجهة DeepSeek API المباشرة."
-            )
+                setModelStatus(
+                    data.error
+                        ? data.error
+                        : "لا توجد موديلات في القائمة الحالية."
+                );
 
-        elif provider == "gemini":
-            notice = (
-                "تعرض القائمة موديلات محددة ضمن قائمة المجاني؛ "
-                "تحقق من حدود حسابك وإتاحة الموديل."
-            )
+                return;
+            }
 
-        elif provider == "groq":
-            notice = (
-                "تعرض القائمة موديلات مسموحًا بها في الكود؛ "
-                "قد تتغير الإتاحة وحدود الاستخدام."
-            )
+            for (const model of models) {
+                const option = document.createElement("option");
 
-        elif provider == "openrouter":
-            notice = (
-                "تمت فلترة الموديلات بحسب علامة :free أو "
-                "السعر الصفري الذي يبلّغ عنه API."
-            )
+                option.value = model.id;
+                option.textContent = model.name || model.id;
 
-        return jsonify({
-            "provider": provider,
-            "models": models,
-            "notice": notice,
-        })
+                modelSelect.appendChild(option);
+            }
 
-    except (RuntimeError, ValueError) as error:
-        return jsonify({
-            "error": str(error),
-            "models": [],
-        }), 400
+            modelSelect.disabled = false;
+
+            setModelStatus(
+                `تم تحميل ${models.length} موديل.`
+            );
+
+        } catch (error) {
+            modelSelect.innerHTML = "";
+
+            const option = document.createElement("option");
+
+            option.value = "";
+            option.textContent = "تعذر تحميل الموديلات";
+
+            modelSelect.appendChild(option);
+
+            setModelStatus(error.message);
+        }
+    }
 
 
-# =========================================================
-# CONVERSATION API
-# =========================================================
+    // =====================================================
+    // CHAT
+    // =====================================================
 
-@app.route("/conversations", methods=["GET"])
-def list_conversations():
-    with get_db() as db:
-        rows = db.execute(
-            """
-            SELECT id, title, created_at, updated_at
-            FROM conversations
-            ORDER BY updated_at DESC, id DESC
-            """
-        ).fetchall()
+    async function sendMessage() {
+        if (isSending) {
+            return;
+        }
 
-    return jsonify({
-        "conversations": [dict(row) for row in rows]
-    })
+        const input = document.getElementById("messageInput");
 
+        const sendButton = document.getElementById("sendButton");
 
-@app.route("/conversations", methods=["POST"])
-def new_conversation():
-    conversation_id = create_conversation()
+        const provider = document.getElementById("provider").value;
 
-    return jsonify({
-        "success": True,
-        "id": conversation_id,
-        "title": "محادثة جديدة",
-    })
+        const model = document.getElementById("model").value;
 
+        const message = input.value.trim();
 
-@app.route("/conversations/<int:conversation_id>", methods=["GET"])
-def get_conversation(conversation_id):
-    with get_db() as db:
-        conversation = db.execute(
-            """
-            SELECT id, title, created_at, updated_at
-            FROM conversations
-            WHERE id = ?
-            """,
-            (conversation_id,),
-        ).fetchone()
+        if (!message) {
+            return;
+        }
 
-    if not conversation:
-        return jsonify({
-            "error": "المحادثة غير موجودة."
-        }), 404
+        if (!model) {
+            addMessage(
+                "error",
+                "اختر موديلًا متاحًا قبل إرسال الرسالة."
+            );
+            return;
+        }
 
-    messages = get_conversation_messages(conversation_id)
+        isSending = true;
 
-    return jsonify({
-        "conversation": dict(conversation),
-        "messages": messages,
-    })
+        sendButton.disabled = true;
 
+        sendButton.textContent = "...";
 
-@app.route(
-    "/conversations/<int:conversation_id>",
-    methods=["DELETE"],
-)
-def delete_conversation(conversation_id):
-    with get_db() as db:
-        cursor = db.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,),
-        )
+        input.value = "";
 
-        db.commit()
+        addMessage("user", message);
 
-    if cursor.rowcount == 0:
-        return jsonify({
-            "error": "المحادثة غير موجودة."
-        }), 404
-
-    return jsonify({
-        "success": True,
-        "message": "تم حذف المحادثة.",
-    })
-
-
-# =========================================================
-# CHAT API
-# =========================================================
-
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.get_json(silent=True) or {}
-
-    message = data.get("message", "")
-    provider = data.get("provider", "")
-    model = data.get("model", "")
-    conversation_id = data.get("conversation_id")
-
-    if not isinstance(message, str) or not message.strip():
-        return jsonify({
-            "error": "اكتب رسالة أولًا."
-        }), 400
-
-    message = message.strip()
-
-    if len(message) > 100000:
-        return jsonify({
-            "error": "الرسالة طويلة جدًا."
-        }), 400
-
-    if provider not in PROVIDERS:
-        return jsonify({
-            "error": "اختر مزود ذكاء اصطناعي صحيحًا."
-        }), 400
-
-    if not isinstance(model, str) or not model:
-        return jsonify({
-            "error": "اختر موديلًا أولًا."
-        }), 400
-
-    if conversation_id in ("", None):
-        conversation_id = None
-
-    try:
-        if conversation_id is not None:
-            conversation_id = int(conversation_id)
-
-            if not conversation_exists(conversation_id):
-                return jsonify({
-                    "error": "المحادثة غير موجودة."
-                }), 404
-
-        else:
-            conversation_id = create_conversation()
-
-        # Build the context from the existing conversation.
-        previous_messages = get_conversation_messages(
-            conversation_id
-        )
-
-        # Store the user's message.
-        save_message(
-            conversation_id,
-            "user",
-            message,
-            provider,
-            model,
-        )
-
-        # Send the existing context plus the new message.
-        api_messages = []
-
-        for old_message in previous_messages:
-            if old_message["role"] in ("user", "assistant"):
-                api_messages.append({
-                    "role": old_message["role"],
-                    "content": old_message["content"],
-                })
-
-        api_messages.append({
-            "role": "user",
-            "content": message,
-        })
-
-        answer = call_model(
-            provider,
-            model,
-            api_messages,
-        )
-
-        save_message(
-            conversation_id,
+        const waitingMessage = addMessage(
             "assistant",
-            answer,
-            provider,
-            model,
-        )
+            "جارٍ التفكير..."
+        );
 
-        with get_db() as db:
-            row = db.execute(
-                """
-                SELECT title
-                FROM conversations
-                WHERE id = ?
-                """,
-                (conversation_id,),
-            ).fetchone()
+        try {
+            const data = await apiFetch("/chat", {
+                method: "POST",
 
-        return jsonify({
-            "success": True,
-            "conversation_id": conversation_id,
-            "title": row["title"] if row else "محادثة جديدة",
-            "answer": answer,
-            "provider": provider,
-            "model": model,
-        })
+                body: JSON.stringify({
+                    message: message,
+                    provider: provider,
+                    model: model,
+                    conversation_id: currentConversationId
+                })
+            });
 
-    except (RuntimeError, ValueError) as error:
-        return jsonify({
-            "error": str(error),
-            "conversation_id": conversation_id,
-        }), 400
+            currentConversationId = data.conversation_id;
 
-    except Exception:
-        app.logger.exception("Unexpected chat error")
+            waitingMessage.remove();
 
-        return jsonify({
-            "error": "حدث خطأ غير متوقع. راجع نافذة تشغيل Flask."
-        }), 500
+            addMessage(
+                "assistant",
+                data.answer,
+                {
+                    provider: data.provider,
+                    model: data.model
+                }
+            );
+
+            await loadConversations();
+
+        } catch (error) {
+            waitingMessage.remove();
+
+            addMessage("error", error.message);
+
+            // If the server created a conversation before
+            // the provider failed, keep its ID when supplied.
+            // The error response can contain conversation_id.
+        } finally {
+            isSending = false;
+
+            sendButton.disabled = false;
+
+            sendButton.textContent = "إرسال";
+
+            input.focus();
+        }
+    }
 
 
-# =========================================================
-# START SERVER
-# =========================================================
+    // =====================================================
+    // CONVERSATIONS
+    // =====================================================
 
-if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=False,
-    )
+    async function loadConversations() {
+        try {
+            const data = await apiFetch("/conversations");
+
+            const list = document.getElementById("conversationList");
+
+            list.innerHTML = "";
+
+            for (const conversation of data.conversations || []) {
+                const item = document.createElement("div");
+
+                item.className = "conversation-item";
+
+                if (
+                    Number(conversation.id) ===
+                    Number(currentConversationId)
+                ) {
+                    item.classList.add("active");
+                }
+
+                const title = document.createElement("button");
+
+                title.className = "conversation-title";
+
+                title.textContent = conversation.title || "محادثة جديدة";
+
+                title.title = conversation.title || "محادثة جديدة";
+
+                title.onclick = () => {
+                    openConversation(conversation.id);
+                };
+
+                const deleteButton = document.createElement("button");
+
+                deleteButton.className = "delete-button";
+
+                deleteButton.textContent = "×";
+
+                deleteButton.title = "حذف المحادثة";
+
+                deleteButton.onclick = (event) => {
+                    event.stopPropagation();
+
+                    deleteConversation(conversation.id);
+                };
+
+                item.appendChild(title);
+
+                item.appendChild(deleteButton);
+
+                list.appendChild(item);
+            }
+
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+
+    async function newConversation() {
+        try {
+            const data = await apiFetch("/conversations", {
+                method: "POST",
+                body: JSON.stringify({})
+            });
+
+            currentConversationId = data.id;
+
+            showWelcome();
+
+            await loadConversations();
+
+            closeSidebar();
+
+        } catch (error) {
+            addMessage("error", error.message);
+        }
+    }
+
+
+    async function openConversation(id) {
+        try {
+            const data = await apiFetch(
+                `/conversations/${encodeURIComponent(id)}`
+            );
+
+            currentConversationId = data.conversation.id;
+
+            const messages = document.getElementById("messages");
+
+            messages.innerHTML = "";
+
+            if (!data.messages || data.messages.length === 0) {
+                showWelcome();
+            } else {
+                for (const message of data.messages) {
+                    const role = message.role === "user"
+                        ? "user"
+                        : "assistant";
+
+                    addMessage(
+                        role,
+                        message.content,
+                        {
+                            provider: message.provider,
+                            model: message.model
+                        }
+                    );
+                }
+            }
+
+            await loadConversations();
+
+            closeSidebar();
+
+        } catch (error) {
+            addMessage("error", error.message);
+        }
+    }
+
+
+    async function deleteConversation(id) {
+        const confirmed = confirm(
+            "هل تريد حذف هذه المحادثة نهائيًا؟"
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            await apiFetch(
+                `/conversations/${encodeURIComponent(id)}`,
+                {
+                    method: "DELETE"
+                }
+            );
+
+            if (
+                Number(currentConversationId) === Number(id)
+            ) {
+                currentConversationId = null;
+
+                showWelcome();
+            }
+
+            await loadConversations();
+
+        } catch (error) {
+            alert(error.message);
+        }
+    }
+
+
+    // =====================================================
+    // API KEY SETTINGS
+    // =====================================================
+
+    async function openSettings() {
+        document.getElementById("settingsModal")
+            .classList.add("open");
+
+        document.getElementById("settingsMessage")
+            .textContent = "";
+
+        await loadKeyStatus();
+    }
+
+
+    function closeSettings() {
+        document.getElementById("settingsModal")
+            .classList.remove("open");
+    }
+
+
+    function handleBackdropClick(event) {
+        if (event.target.id === "settingsModal") {
+            closeSettings();
+        }
+    }
+
+
+    async function loadKeyStatus() {
+        try {
+            const data = await apiFetch("/api/keys");
+
+            for (const provider of Object.keys(keyInputIds)) {
+                const input = document.getElementById(
+                    keyInputIds[provider]
+                );
+
+                const status = document.getElementById(
+                    keyStatusIds[provider]
+                );
+
+                input.value = "";
+
+                if (data.keys[provider]) {
+                    status.textContent = "✓ يوجد مفتاح محفوظ";
+
+                    status.classList.add("saved");
+                } else {
+                    status.textContent = "لا يوجد مفتاح محفوظ";
+
+                    status.classList.remove("saved");
+                }
+            }
+
+        } catch (error) {
+            showSettingsMessage(error.message, true);
+        }
+    }
+
+
+    async function saveKeys() {
+        const button = document.getElementById("saveKeysButton");
+
+        const payload = {};
+
+        for (const provider of Object.keys(keyInputIds)) {
+            payload[provider] = document.getElementById(
+                keyInputIds[provider]
+            ).value.trim();
+        }
+
+        button.disabled = true;
+
+        button.textContent = "جارٍ الحفظ...";
+
+        try {
+            const data = await apiFetch("/api/keys", {
+                method: "POST",
+
+                body: JSON.stringify(payload)
+            });
+
+            for (const provider of Object.keys(keyInputIds)) {
+                document.getElementById(
+                    keyInputIds[provider]
+                ).value = "";
+            }
+
+            showSettingsMessage(
+                data.message || "تم حفظ المفاتيح.",
+                false
+            );
+
+            await loadKeyStatus();
+
+            await providerChanged();
+
+        } catch (error) {
+            showSettingsMessage(error.message, true);
+
+        } finally {
+            button.disabled = false;
+
+            button.textContent = "حفظ المفاتيح";
+        }
+    }
+
+
+    function showSettingsMessage(message, isError) {
+        const element = document.getElementById("settingsMessage");
+
+        element.textContent = message;
+
+        element.className = "modal-message " +
+            (isError ? "error" : "success");
+    }
+
+
+    // =====================================================
+    // MOBILE SIDEBAR
+    // =====================================================
+
+    function toggleSidebar() {
+        document.getElementById("sidebar")
+            .classList.toggle("open");
+    }
+
+
+    function closeSidebar() {
+        document.getElementById("sidebar")
+            .classList.remove("open");
+    }
+
+
+    // =====================================================
+    // KEYBOARD
+    // =====================================================
+
+    document.getElementById("messageInput")
+        .addEventListener("keydown", function(event) {
+            if (
+                event.key === "Enter" &&
+                !event.shiftKey
+            ) {
+                event.preventDefault();
+
+                sendMessage();
+            }
+        });
+
+
+    // =====================================================
+    // INITIALIZATION
+    // =====================================================
+
+    async function initialize() {
+        await loadConversations();
+
+        await providerChanged();
+
+        await loadKeyStatus();
+    }
+
+
+    initialize();
+
+</script>
+
+</body>
+</html>
