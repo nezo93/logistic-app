@@ -8,13 +8,15 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# ضع مفتاح Gemini هنا أو استخدم متغير البيئة GEMINI_API_KEY
-API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY")
-client = genai.Client(api_key=API_KEY)
+# قراءة مفتاح Gemini من متغيرات البيئة
+API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-DB_FILE = "assistant.db"
+# لا توقف البرنامج إذا لم يوجد المفتاح
+client = genai.Client(api_key=API_KEY) if API_KEY else None
 
-# معرفات النماذج: قد تختلف الإتاحة حسب حسابك وواجهة API.
+DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "assistant.db")
+
 MODELS = [
     "gemini-3.8-flash",
     "gemini-3.7-flash",
@@ -24,7 +26,6 @@ MODELS = [
     "gemini-3.1-flash-lite",
 ]
 
-# الطلبات النشطة التي يمكن محاولة إلغائها
 active_requests = {}
 requests_lock = threading.Lock()
 
@@ -53,15 +54,37 @@ def init_db():
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 model TEXT,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (conversation_id)
-                    REFERENCES conversations(id)
+                created_at TEXT NOT NULL
             )
         """)
 
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def create_conversation(title="محادثة جديدة"):
+    conversation_id = str(uuid.uuid4())
+    timestamp = now()
+
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO conversations
+                (id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        """, (conversation_id, title, timestamp, timestamp))
+
+    return conversation_id
+
+
+def conversation_exists(conversation_id):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE id = ?",
+            (conversation_id,)
+        ).fetchone()
+
+    return row is not None
 
 
 def save_message(conversation_id, role, content, model=None):
@@ -81,36 +104,13 @@ def save_message(conversation_id, role, content, model=None):
         """, (timestamp, conversation_id))
 
 
-def conversation_exists(conversation_id):
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM conversations WHERE id = ?",
-            (conversation_id,)
-        ).fetchone()
-    return row is not None
-
-
-def create_conversation(title="محادثة جديدة"):
-    conversation_id = str(uuid.uuid4())
-    timestamp = now()
-
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO conversations
-                (id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        """, (conversation_id, title, timestamp, timestamp))
-
-    return conversation_id
-
-
 def get_messages(conversation_id):
     with get_db() as conn:
         rows = conn.execute("""
             SELECT role, content, model, created_at
             FROM messages
             WHERE conversation_id = ?
-            ORDER BY id ASC
+            ORDER BY id
         """, (conversation_id,)).fetchall()
 
     return [dict(row) for row in rows]
@@ -181,32 +181,52 @@ def chat():
         return jsonify({"error": "اكتب رسالة أولاً"}), 400
 
     if model not in MODELS:
-        return jsonify({"error": "النموذج المختار غير موجود في القائمة"}), 400
+        return jsonify({"error": "النموذج غير موجود في القائمة"}), 400
+
+    # فحص المفتاح قبل محاولة الاتصال
+    if not API_KEY or client is None:
+        return jsonify({
+            "error": (
+                "مفتاح Gemini API غير موجود. "
+                "أضفه إلى متغير البيئة GEMINI_API_KEY ثم أعد تشغيل البرنامج."
+            )
+        }), 400
 
     if not conversation_id or not conversation_exists(conversation_id):
-        conversation_id = create_conversation(
-            message[:60] if message else "محادثة جديدة"
-        )
+        conversation_id = create_conversation(message[:60])
 
-    # حفظ رسالة المستخدم فوراً
+    # حفظ رسالة المستخدم تلقائياً
     save_message(conversation_id, "user", message, model)
 
-    # حفظ عنوان المحادثة من أول رسالة
     with get_db() as conn:
-        row = conn.execute("""
-            SELECT COUNT(*) AS count
+        count = conn.execute("""
+            SELECT COUNT(*) AS total
             FROM messages
             WHERE conversation_id = ?
-        """, (conversation_id,)).fetchone()
+        """, (conversation_id,)).fetchone()["total"]
 
-        if row["count"] == 1:
+        if count == 1:
             conn.execute("""
-                UPDATE conversations
-                SET title = ?
+                UPDATE conversations SET title = ?
                 WHERE id = ?
             """, (message[:60], conversation_id))
 
-    # إنشاء طلب يمكن للواجهة طلب إلغائه
+    history = get_messages(conversation_id)[:-1]
+
+    prompt_parts = [
+        "أنت مساعد ذكاء اصطناعي مفيد. أجب بلغة المستخدم.",
+        "سجل المحادثة السابقة:"
+    ]
+
+    for item in history:
+        speaker = "المستخدم" if item["role"] == "user" else "المساعد"
+        prompt_parts.append(f"{speaker}: {item['content']}")
+
+    prompt_parts.append(f"المستخدم: {message}")
+    prompt_parts.append("المساعد:")
+
+    prompt = "\n\n".join(prompt_parts)
+
     request_id = str(uuid.uuid4())
     cancel_event = threading.Event()
 
@@ -214,32 +234,6 @@ def chat():
         active_requests[request_id] = cancel_event
 
     try:
-        # بناء السياق من المحادثة المحفوظة.
-        # استبعاد آخر رسالة من السجل لتجنب تكرارها.
-        history = get_messages(conversation_id)[:-1]
-
-        prompt_parts = [
-            "أنت مساعد ذكاء اصطناعي مفيد. أجب بلغة المستخدم.",
-            "هذه رسائل المحادثة السابقة:"
-        ]
-
-        for item in history:
-            speaker = "المستخدم" if item["role"] == "user" else "المساعد"
-            prompt_parts.append(f"{speaker}: {item['content']}")
-
-        prompt_parts.append(f"المستخدم: {message}")
-        prompt_parts.append("المساعد:")
-
-        prompt = "\n\n".join(prompt_parts)
-
-        if cancel_event.is_set():
-            return jsonify({
-                "cancelled": True,
-                "conversation_id": conversation_id
-            })
-
-        # واجهة Gemini المتزامنة؛ إلغاء الانتظار لا يضمن إيقاف
-        # المعالجة داخل خوادم المزود.
         response = client.models.generate_content(
             model=model,
             contents=prompt
@@ -251,9 +245,12 @@ def chat():
                 "conversation_id": conversation_id
             })
 
-        reply = getattr(response, "text", None) or "لم يصل رد نصي من النموذج."
+        reply = getattr(response, "text", None)
 
-        # حفظ الرد بعد اكتماله
+        if not reply:
+            reply = "لم يصل رد نصي من النموذج."
+
+        # حفظ رد المساعد تلقائياً
         save_message(conversation_id, "assistant", reply, model)
 
         return jsonify({
@@ -283,18 +280,16 @@ def stop_request():
 
         if event:
             event.set()
-            return jsonify({
-                "success": True,
-                "message": "تم طلب إيقاف الإجابة"
-            })
+            return jsonify({"success": True})
 
     return jsonify({
         "success": False,
-        "message": "لم يتم العثور على طلب نشط"
+        "message": "لا يوجد طلب نشط قابل للإلغاء."
     })
 
 
 init_db()
+
 
 if __name__ == "__main__":
     app.run(debug=False, threaded=True)
