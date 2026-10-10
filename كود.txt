@@ -1,106 +1,300 @@
 from flask import Flask, render_template, request, jsonify
 from google import genai
+import sqlite3
 import os
+import threading
+import uuid
+from datetime import datetime
 
 app = Flask(__name__)
 
-API_KEY = "YOUR_API_KEY"
+# ضع مفتاح Gemini هنا أو استخدم متغير البيئة GEMINI_API_KEY
+API_KEY = os.environ.get("GEMINI_API_KEY", "YOUR_API_KEY")
+client = genai.Client(api_key=API_KEY)
 
-client = genai.Client(
-    api_key=API_KEY,
-    http_options={"timeout": 60000}
-)
+DB_FILE = "assistant.db"
 
-MODELS = {
-    "gemini-3.8-flash": "Gemini 3.8 Flash",
-    "gemini-3.7-flash": "Gemini 3.7 Flash",
-    "gemini-3.6-flash": "Gemini 3.6 Flash",
-    "gemini-3.5-flash": "Gemini 3.5 Flash",
-    "gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
-    "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite"
-}
+# معرفات النماذج: قد تختلف الإتاحة حسب حسابك وواجهة API.
+MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+]
+
+# الطلبات النشطة التي يمكن محاولة إلغائها
+active_requests = {}
+requests_lock = threading.Lock()
+
+
+def get_db():
+    conn = sqlite3.connect(DB_FILE, timeout=30)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                model TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id)
+                    REFERENCES conversations(id)
+            )
+        """)
+
+
+def now():
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def save_message(conversation_id, role, content, model=None):
+    timestamp = now()
+
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO messages
+                (conversation_id, role, content, model, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (conversation_id, role, content, model, timestamp))
+
+        conn.execute("""
+            UPDATE conversations
+            SET updated_at = ?
+            WHERE id = ?
+        """, (timestamp, conversation_id))
+
+
+def conversation_exists(conversation_id):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE id = ?",
+            (conversation_id,)
+        ).fetchone()
+    return row is not None
+
+
+def create_conversation(title="محادثة جديدة"):
+    conversation_id = str(uuid.uuid4())
+    timestamp = now()
+
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO conversations
+                (id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        """, (conversation_id, title, timestamp, timestamp))
+
+    return conversation_id
+
+
+def get_messages(conversation_id):
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT role, content, model, created_at
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY id ASC
+        """, (conversation_id,)).fetchall()
+
+    return [dict(row) for row in rows]
 
 
 @app.route("/")
-def home():
-    return render_template("index.html")
+def index():
+    return render_template("index.html", models=MODELS)
+
+
+@app.route("/conversations", methods=["GET"])
+def list_conversations():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, title, created_at, updated_at
+            FROM conversations
+            ORDER BY updated_at DESC
+        """).fetchall()
+
+    return jsonify([dict(row) for row in rows])
+
+
+@app.route("/conversations", methods=["POST"])
+def new_conversation():
+    conversation_id = create_conversation()
+
+    return jsonify({
+        "id": conversation_id,
+        "title": "محادثة جديدة"
+    })
+
+
+@app.route("/conversations/<conversation_id>", methods=["GET"])
+def load_conversation(conversation_id):
+    if not conversation_exists(conversation_id):
+        return jsonify({"error": "المحادثة غير موجودة"}), 404
+
+    return jsonify({
+        "id": conversation_id,
+        "messages": get_messages(conversation_id)
+    })
+
+
+@app.route("/conversations/<conversation_id>", methods=["DELETE"])
+def delete_conversation(conversation_id):
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM messages WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        conn.execute(
+            "DELETE FROM conversations WHERE id = ?",
+            (conversation_id,)
+        )
+
+    return jsonify({"success": True})
 
 
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json(silent=True) or {}
 
-    question = data.get("message", "").strip()
-    selected_model = data.get("model", "gemini-3.8-flash")
-    history = data.get("history", [])
+    message = str(data.get("message", "")).strip()
+    model = data.get("model", MODELS[0])
+    conversation_id = data.get("conversation_id")
 
-    if not question:
-        return jsonify({"error": "Please enter a message."}), 400
+    if not message:
+        return jsonify({"error": "اكتب رسالة أولاً"}), 400
 
-    if selected_model != "auto" and selected_model not in MODELS:
-        return jsonify({"error": "Invalid model selection."}), 400
+    if model not in MODELS:
+        return jsonify({"error": "النموذج المختار غير موجود في القائمة"}), 400
 
-    if selected_model == "auto":
-        models_to_try = list(MODELS.keys())
-    else:
-        models_to_try = [selected_model]
+    if not conversation_id or not conversation_exists(conversation_id):
+        conversation_id = create_conversation(
+            message[:60] if message else "محادثة جديدة"
+        )
 
-    # Build the conversation input
-    conversation = []
+    # حفظ رسالة المستخدم فوراً
+    save_message(conversation_id, "user", message, model)
 
-    if isinstance(history, list):
-        for item in history[-20:]:
-            if not isinstance(item, dict):
-                continue
+    # حفظ عنوان المحادثة من أول رسالة
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT COUNT(*) AS count
+            FROM messages
+            WHERE conversation_id = ?
+        """, (conversation_id,)).fetchone()
 
-            role = item.get("role")
-            content = item.get("content")
+        if row["count"] == 1:
+            conn.execute("""
+                UPDATE conversations
+                SET title = ?
+                WHERE id = ?
+            """, (message[:60], conversation_id))
 
-            if role in ("user", "assistant") and isinstance(content, str):
-                conversation.append(f"{role}: {content}")
+    # إنشاء طلب يمكن للواجهة طلب إلغائه
+    request_id = str(uuid.uuid4())
+    cancel_event = threading.Event()
 
-    conversation.append(f"user: {question}")
+    with requests_lock:
+        active_requests[request_id] = cancel_event
 
-    prompt = "\n\n".join(conversation)
+    try:
+        # بناء السياق من المحادثة المحفوظة.
+        # استبعاد آخر رسالة من السجل لتجنب تكرارها.
+        history = get_messages(conversation_id)[:-1]
 
-    last_error = "No model was available."
+        prompt_parts = [
+            "أنت مساعد ذكاء اصطناعي مفيد. أجب بلغة المستخدم.",
+            "هذه رسائل المحادثة السابقة:"
+        ]
 
-    for model_id in models_to_try:
-        try:
-            response = client.interactions.create(
-                model=model_id,
-                input=prompt
-            )
+        for item in history:
+            speaker = "المستخدم" if item["role"] == "user" else "المساعد"
+            prompt_parts.append(f"{speaker}: {item['content']}")
 
-            answer = response.output_text
+        prompt_parts.append(f"المستخدم: {message}")
+        prompt_parts.append("المساعد:")
 
-            if not answer:
-                answer = "The model returned an empty response."
+        prompt = "\n\n".join(prompt_parts)
 
+        if cancel_event.is_set():
             return jsonify({
-                "reply": answer,
-                "model": MODELS[model_id]
+                "cancelled": True,
+                "conversation_id": conversation_id
             })
 
-        except Exception as error:
-            last_error = f"{type(error).__name__}: {error}"
+        # واجهة Gemini المتزامنة؛ إلغاء الانتظار لا يضمن إيقاف
+        # المعالجة داخل خوادم المزود.
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt
+        )
 
-            if selected_model != "auto":
-                break
+        if cancel_event.is_set():
+            return jsonify({
+                "cancelled": True,
+                "conversation_id": conversation_id
+            })
 
-    print("Gemini API error:", last_error)
+        reply = getattr(response, "text", None) or "لم يصل رد نصي من النموذج."
+
+        # حفظ الرد بعد اكتماله
+        save_message(conversation_id, "assistant", reply, model)
+
+        return jsonify({
+            "reply": reply,
+            "model": model,
+            "conversation_id": conversation_id
+        })
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "conversation_id": conversation_id
+        }), 500
+
+    finally:
+        with requests_lock:
+            active_requests.pop(request_id, None)
+
+
+@app.route("/stop", methods=["POST"])
+def stop_request():
+    data = request.get_json(silent=True) or {}
+    request_id = data.get("request_id")
+
+    with requests_lock:
+        event = active_requests.get(request_id)
+
+        if event:
+            event.set()
+            return jsonify({
+                "success": True,
+                "message": "تم طلب إيقاف الإجابة"
+            })
 
     return jsonify({
-        "error": (
-            "The AI request failed. Check the model availability, "
-            "API key, internet connection, and account limits."
-        )
-    }), 502
+        "success": False,
+        "message": "لم يتم العثور على طلب نشط"
+    })
 
+
+init_db()
 
 if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=False
-    )
+    app.run(debug=False, threaded=True)
