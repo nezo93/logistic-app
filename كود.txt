@@ -1,7 +1,42 @@
-alter table public.profiles
-  add column if not exists driver_status text default 'pending',
-  add column if not exists rejection_reason text;
+from google import genai
 
-update public.profiles
-set driver_status = case when is_verified then 'approved' else 'pending' end
-where role::text = 'driver' and driver_status is null;
+ضع مفتاح Gemini API الخاص بك هنا
+
+API_KEY = "ضع_مفتاحك_هنا"
+
+الاتصال بـ Gemini
+
+client = genai.Client(api_key=API_KEY)
+
+print("=" * 40)
+print("       AI Assistant - Gemini")
+print("=" * 40)
+print("اكتب سؤالك وسيرد عليك Gemini.")
+print("اكتب exit للخروج.")
+print("-" * 40)
+
+while True:
+try:
+question = input("\nأنت: ").strip()
+
+    if question.lower() == "exit":
+        print("تم إغلاق البرنامج. إلى اللقاء!")
+        break
+
+    if not question:
+        continue
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=question
+    )
+
+    print("\nGemini:", response.text)
+
+except KeyboardInterrupt:
+    print("\nتم إغلاق البرنامج.")
+    break
+
+except Exception as e:
+    print("\nحدث خطأ:", e)
+    print("تحقق من اتصال الإنترنت ومفتاح API.")
