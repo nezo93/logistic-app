@@ -1,26 +1,98 @@
 from google import genai
+import time
 
-API_KEY = "ضع_مفتاحك_هنا"
+# Enter your Google Gemini API key
+API_KEY = "YOUR_API_KEY"
 
-print("جاري الاتصال بـ Gemini...", flush=True)
+client = genai.Client(
+    api_key=API_KEY,
+    http_options={"timeout": 60000}
+)
 
-try:
-    client = genai.Client(
-        api_key=API_KEY,
-        http_options={"timeout": 20000}
+MODELS = {
+    "1": ("Gemini 3.8 Flash", "gemini-3.8-flash"),
+    "2": ("Gemini 3.7 Flash", "gemini-3.7-flash"),
+    "3": ("Gemini 3.6 Flash", "gemini-3.6-flash"),
+    "4": ("Gemini 3.5 Flash", "gemini-3.5-flash"),
+    "5": ("Gemini 3.5 Flash-Lite", "gemini-3.5-flash-lite"),
+    "6": ("Gemini 3.1 Flash-Lite", "gemini-3.1-flash-lite"),
+}
+
+
+def ask_model(model_id, question):
+    response = client.interactions.create(
+        model=model_id,
+        input=question
     )
+    return response.output_text
 
-    print("تم إعداد الاتصال.", flush=True)
-    print("جارٍ إرسال السؤال...", flush=True)
 
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents="Reply with only: CONNECTION_OK"
-    )
+def main():
+    print("=" * 45)
+    print("           MY AI ASSISTANT")
+    print("=" * 45)
 
-    print("الرد:", response.text, flush=True)
+    while True:
+        print("\nAvailable Models:")
 
-except Exception as e:
-    print("حدث خطأ:", repr(e), flush=True)
+        for key, (name, _) in MODELS.items():
+            print(f"{key}. {name}")
 
-input("\nاضغط Enter للخروج...")
+        print("7. Auto Mode")
+        print("0. Exit")
+
+        choice = input("\nSelect a model: ").strip()
+
+        if choice == "0":
+            print("Goodbye!")
+            break
+
+        if choice not in MODELS and choice != "7":
+            print("Invalid selection. Please try again.")
+            continue
+
+        if choice == "7":
+            model_list = list(MODELS.values())
+        else:
+            model_list = [MODELS[choice]]
+
+        question = input("\nEnter your question: ").strip()
+
+        if not question:
+            print("No question entered.")
+            continue
+
+        answered = False
+
+        for name, model_id in model_list:
+            print(f"\nConnecting to {name}...")
+
+            try:
+                answer = ask_model(model_id, question)
+
+                print(f"\nResponse from {name}:\n")
+                print(answer)
+
+                answered = True
+                break
+
+            except Exception as error:
+                print(f"\nFailed to use {name}.")
+                print(f"Error type: {type(error).__name__}")
+
+                if choice != "7":
+                    print("Try another model.")
+                    break
+
+                time.sleep(1)
+
+        if not answered and choice == "7":
+            print("\nAll available models failed.")
+            print("Check your API key, internet connection,")
+            print("model availability, and account limits.")
+
+        input("\nPress Enter to continue...")
+
+
+if __name__ == "__main__":
+    main()
