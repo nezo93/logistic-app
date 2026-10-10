@@ -1,28 +1,26 @@
 from google import genai
 
-API_KEY = "YOUR_API_KEY"
+API_KEY = "ضع_مفتاحك_هنا"
 
-client = genai.Client(api_key=API_KEY)
+print("جاري الاتصال بـ Gemini...", flush=True)
 
-print("AI Assistant")
-print("اكتب exit للخروج")
+try:
+    client = genai.Client(
+        api_key=API_KEY,
+        http_options={"timeout": 20000}
+    )
 
-while True:
-    question = input("\nأنت: ").strip()
+    print("تم إعداد الاتصال.", flush=True)
+    print("جارٍ إرسال السؤال...", flush=True)
 
-    if question.lower() == "exit":
-        break
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents="Reply with only: CONNECTION_OK"
+    )
 
-    if not question:
-        continue
+    print("الرد:", response.text, flush=True)
 
-    try:
-        response = client.interactions.create(
-            model="gemini-3.8-flash",
-            input=question
-        )
+except Exception as e:
+    print("حدث خطأ:", repr(e), flush=True)
 
-        print("\nGemini:", response.output_text)
-
-    except Exception as e:
-        print("\nحدث خطأ:", e)
+input("\nاضغط Enter للخروج...")
