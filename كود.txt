@@ -1,19 +1,43 @@
-Traceback (most recent call last):
-  File "C:\Users\pc\AppData\Local\Programs\Python\Python315\Lib\site-packages\flask\app.py", line 1536, in __call__
-    return self.wsgi_app(environ, start_response)
-           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\pc\AppData\Local\Programs\Python\Python315\Lib\site-packages\flask\app.py", line 1514, in wsgi_app
-    response = self.handle_exception(e)
-  File "C:\Users\pc\AppData\Local\Programs\Python\Python315\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
-    response = self.full_dispatch_request()
-  File "C:\Users\pc\AppData\Local\Programs\Python\Python315\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
-    rv = self.handle_user_exception(e)
-  File "C:\Users\pc\AppData\Local\Programs\Python\Python315\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
-    rv = self.dispatch_request()
-  File "C:\Users\pc\AppData\Local\Programs\Python\Python315\Lib\site-packages\flask\app.py", line 902, in dispatch_request
-    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
-           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\pc\Desktop\AI_Assistant\app.py", line 799, in new_conversation
-    "conversation": dict(row),
-                    ~~~~^^^^^
-TypeError: 'NoneType' object is not iterable
+@app.route("/conversations", methods=["POST"])
+def new_conversation():
+    try:
+        conversation_id = create_conversation()
+
+        with get_db() as db:
+            row = db.execute(
+                """
+                SELECT id, title, created_at, updated_at
+                FROM conversations
+                WHERE id = ?
+                """,
+                (conversation_id,)
+            ).fetchone()
+
+        if row is None:
+            app.logger.error(
+                "Conversation %s was created but could not be retrieved.",
+                conversation_id
+            )
+
+            return jsonify({
+                "success": False,
+                "error": "تم إنشاء المحادثة، لكن تعذر استرجاع بياناتها."
+            }), 500
+
+        conversation = dict(row)
+
+        return jsonify({
+            "success": True,
+            "conversation": conversation,
+            "id": conversation_id
+        }), 201
+
+    except Exception:
+        app.logger.exception(
+            "Error while creating a conversation"
+        )
+
+        return jsonify({
+            "success": False,
+            "error": "حدث خطأ أثناء إنشاء المحادثة. راجع نافذة CMD."
+        }), 500
