@@ -1,29 +1,3 @@
-from google import genai
+حدث خطأ: 404 NOT_FOUND. {'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Interactions API (https://ai.google.dev/gemini-api/docs/get-started).', 'status': 'NOT_FOUND'}}
 
-API_KEY = "ضع_مفتاحك_هنا"
-
-client = genai.Client(api_key=API_KEY)
-
-print("AI Assistant - Gemini")
-print("اكتب exit للخروج")
-
-while True:
-    question = input("\nأنت: ").strip()
-
-    if question.lower() == "exit":
-        print("إلى اللقاء!")
-        break
-
-    if not question:
-        continue
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=question
-        )
-
-        print("\nGemini:", response.text)
-
-    except Exception as e:
-        print("\nحدث خطأ:", e)
+أنت:
