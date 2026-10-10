@@ -1,98 +1,333 @@
-from google import genai
-import time
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-# Enter your Google Gemini API key
-API_KEY = "YOUR_API_KEY"
+    <title>AI Assistant</title>
 
-client = genai.Client(
-    api_key=API_KEY,
-    http_options={"timeout": 60000}
-)
+    <style>
+        * {
+            box-sizing: border-box;
+        }
 
-MODELS = {
-    "1": ("Gemini 3.8 Flash", "gemini-3.8-flash"),
-    "2": ("Gemini 3.7 Flash", "gemini-3.7-flash"),
-    "3": ("Gemini 3.6 Flash", "gemini-3.6-flash"),
-    "4": ("Gemini 3.5 Flash", "gemini-3.5-flash"),
-    "5": ("Gemini 3.5 Flash-Lite", "gemini-3.5-flash-lite"),
-    "6": ("Gemini 3.1 Flash-Lite", "gemini-3.1-flash-lite"),
-}
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0f1117;
+            color: #f1f5f9;
+            height: 100vh;
+            display: flex;
+        }
 
+        .sidebar {
+            width: 250px;
+            background: #171923;
+            padding: 22px;
+            border-right: 1px solid #292c38;
+        }
 
-def ask_model(model_id, question):
-    response = client.interactions.create(
-        model=model_id,
-        input=question
-    )
-    return response.output_text
+        .logo {
+            font-size: 23px;
+            font-weight: bold;
+            margin-bottom: 30px;
+        }
 
+        .sidebar button {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 12px;
+            border: none;
+            border-radius: 8px;
+            background: #292d3e;
+            color: white;
+            cursor: pointer;
+        }
 
-def main():
-    print("=" * 45)
-    print("           MY AI ASSISTANT")
-    print("=" * 45)
+        .sidebar button:hover {
+            background: #3b4160;
+        }
 
-    while True:
-        print("\nAvailable Models:")
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
 
-        for key, (name, _) in MODELS.items():
-            print(f"{key}. {name}")
+        header {
+            padding: 18px 25px;
+            border-bottom: 1px solid #292c38;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
 
-        print("7. Auto Mode")
-        print("0. Exit")
+        select {
+            padding: 10px;
+            border-radius: 8px;
+            background: #222536;
+            color: white;
+            border: 1px solid #41465c;
+            max-width: 65%;
+        }
 
-        choice = input("\nSelect a model: ").strip()
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            padding: 25px;
+        }
 
-        if choice == "0":
-            print("Goodbye!")
-            break
+        .welcome {
+            text-align: center;
+            margin: 12vh auto 0;
+        }
 
-        if choice not in MODELS and choice != "7":
-            print("Invalid selection. Please try again.")
-            continue
+        .welcome h1 {
+            font-size: 34px;
+        }
 
-        if choice == "7":
-            model_list = list(MODELS.values())
-        else:
-            model_list = [MODELS[choice]]
+        .welcome p {
+            color: #a5adbd;
+        }
 
-        question = input("\nEnter your question: ").strip()
+        .message {
+            max-width: 850px;
+            margin: 18px auto;
+            padding: 16px;
+            border-radius: 12px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
 
-        if not question:
-            print("No question entered.")
-            continue
+        .user {
+            background: #282d42;
+        }
 
-        answered = False
+        .assistant {
+            background: #191d29;
+        }
 
-        for name, model_id in model_list:
-            print(f"\nConnecting to {name}...")
+        .composer {
+            padding: 18px;
+            border-top: 1px solid #292c38;
+        }
 
-            try:
-                answer = ask_model(model_id, question)
+        .input-box {
+            max-width: 900px;
+            margin: auto;
+            display: flex;
+            gap: 10px;
+        }
 
-                print(f"\nResponse from {name}:\n")
-                print(answer)
+        textarea {
+            flex: 1;
+            resize: vertical;
+            min-height: 52px;
+            max-height: 180px;
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid #41465c;
+            background: #202331;
+            color: white;
+            font-size: 16px;
+            outline: none;
+        }
 
-                answered = True
-                break
+        #send {
+            padding: 0 22px;
+            border: none;
+            border-radius: 12px;
+            background: #646cff;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
 
-            except Exception as error:
-                print(f"\nFailed to use {name}.")
-                print(f"Error type: {type(error).__name__}")
+        #send:disabled {
+            opacity: 0.5;
+            cursor: wait;
+        }
 
-                if choice != "7":
-                    print("Try another model.")
-                    break
+        .status {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 13px;
+            margin-top: 10px;
+        }
 
-                time.sleep(1)
+        @media (max-width: 650px) {
+            .sidebar {
+                display: none;
+            }
 
-        if not answered and choice == "7":
-            print("\nAll available models failed.")
-            print("Check your API key, internet connection,")
-            print("model availability, and account limits.")
+            header {
+                padding: 14px;
+            }
 
-        input("\nPress Enter to continue...")
+            #chat {
+                padding: 12px;
+            }
 
+            .composer {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
 
-if __name__ == "__main__":
-    main()
+<body>
+
+    <aside class="sidebar">
+        <div class="logo">✦ AI Assistant</div>
+        <button id="newChat">＋ New Chat</button>
+        <p style="color:#9ca3af;font-size:13px">
+            Personal AI Assistant
+        </p>
+    </aside>
+
+    <main class="main">
+
+        <header>
+            <strong id="title">AI Assistant</strong>
+
+            <select id="model">
+                <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
+                <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option>
+                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+                <option value="auto">Auto Mode</option>
+            </select>
+        </header>
+
+        <section id="chat" aria-live="polite">
+            <div class="welcome" id="welcome">
+                <h1>How can I help you?</h1>
+                <p>Ask anything. Your AI assistant is ready.</p>
+            </div>
+        </section>
+
+        <div class="composer">
+            <div class="input-box">
+                <textarea
+                    id="question"
+                    placeholder="Message your AI assistant..."
+                    dir="auto"
+                    aria-label="Your message"
+                ></textarea>
+
+                <button id="send">Send</button>
+            </div>
+
+            <div class="status" id="status">
+                Ready
+            </div>
+        </div>
+
+    </main>
+
+<script>
+    const chat = document.getElementById("chat");
+    const question = document.getElementById("question");
+    const send = document.getElementById("send");
+    const model = document.getElementById("model");
+    const statusText = document.getElementById("status");
+    const welcome = document.getElementById("welcome");
+
+    let history = [];
+
+    function addMessage(text, role) {
+        if (welcome) {
+            welcome.remove();
+        }
+
+        const message = document.createElement("div");
+        message.className = "message " + role;
+        message.dir = "auto";
+        message.textContent = text;
+
+        chat.appendChild(message);
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendMessage() {
+        const text = question.value.trim();
+
+        if (!text || send.disabled) {
+            return;
+        }
+
+        addMessage(text, "user");
+        question.value = "";
+        send.disabled = true;
+        statusText.textContent = "Thinking...";
+
+        try {
+            const response = await fetch("/chat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    message: text,
+                    model: model.value,
+                    history: history
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || "Request failed.");
+            }
+
+            addMessage(data.reply, "assistant");
+
+            history.push(
+                { role: "user", content: text },
+                { role: "assistant", content: data.reply }
+            );
+
+            statusText.textContent =
+                "Connected: " + (data.model || model.value);
+
+        } catch (error) {
+            addMessage("Error: " + error.message, "assistant");
+            statusText.textContent = "Request failed";
+        } finally {
+            send.disabled = false;
+            question.focus();
+        }
+    }
+
+    send.addEventListener("click", sendMessage);
+
+    question.addEventListener("keydown", function(event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
+        }
+    });
+
+    document.getElementById("newChat").addEventListener("click", function() {
+        chat.innerHTML = "";
+        history = [];
+
+        const greeting = document.createElement("div");
+        greeting.className = "welcome";
+        greeting.innerHTML =
+            "<h1>How can I help you?</h1>" +
+            "<p>Ask anything. Your AI assistant is ready.</p>";
+
+        chat.appendChild(greeting);
+        statusText.textContent = "New conversation";
+        question.focus();
+    });
+</script>
+
+</body>
+</html>
