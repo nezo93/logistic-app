@@ -1,30 +1,17 @@
-import sqlite3
-from pathlib import Path
-
-DB_PATH = Path(__file__).resolve().parent / "assistant.db"
-
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
-
-tables = cursor.execute("""
-    SELECT name
-    FROM sqlite_master
-    WHERE type = 'table'
-""").fetchall()
-
-print("Database tables:")
-
-for (table_name,) in tables:
-    print(f"\nTable: {table_name}")
-
-    columns = cursor.execute(
-        f'PRAGMA table_info("{table_name}")'
+Traceback (most recent call last):
+  File "C:\Users\pc\Desktop\AI_Assistant\app.py", line 982, in chat
+    previous_messages = get_conversation_messages(
+        conversation_id
+    )
+  File "C:\Users\pc\Desktop\AI_Assistant\app.py", line 707, in get_conversation_messages
+    rows = db.execute(
+           ~~~~~~~~~~^
+        """
+        ^^^
+    ...<5 lines>...
+        (conversation_id,),
+        ^^^^^^^^^^^^^^^^^^^
     ).fetchall()
-
-    for column in columns:
-        print(f"  - {column[1]}")
-
-conn.commit()
-conn.close()
-
-print("\nDatabase inspection completed.")
+    ^
+sqlite3.OperationalError: no such column: provider
+127.0.0.1 - - [09/Oct/2026 02:50:39] "POST /chat HTTP/1.1" 500 -
