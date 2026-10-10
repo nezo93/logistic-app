@@ -1,295 +1,603 @@
-from flask import Flask, render_template, request, jsonify
-from google import genai
-import sqlite3
-import os
-import threading
-import uuid
-from datetime import datetime
-
-app = Flask(__name__)
-
-# قراءة مفتاح Gemini من متغيرات البيئة
-API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-
-# لا توقف البرنامج إذا لم يوجد المفتاح
-client = genai.Client(api_key=API_KEY) if API_KEY else None
-
-DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "assistant.db")
-
-MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
-]
-
-active_requests = {}
-requests_lock = threading.Lock()
-
-
-def get_db():
-    conn = sqlite3.connect(DB_FILE, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                model TEXT,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-
-def now():
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def create_conversation(title="محادثة جديدة"):
-    conversation_id = str(uuid.uuid4())
-    timestamp = now()
-
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO conversations
-                (id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        """, (conversation_id, title, timestamp, timestamp))
-
-    return conversation_id
-
-
-def conversation_exists(conversation_id):
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM conversations WHERE id = ?",
-            (conversation_id,)
-        ).fetchone()
-
-    return row is not None
-
-
-def save_message(conversation_id, role, content, model=None):
-    timestamp = now()
-
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO messages
-                (conversation_id, role, content, model, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (conversation_id, role, content, model, timestamp))
-
-        conn.execute("""
-            UPDATE conversations
-            SET updated_at = ?
-            WHERE id = ?
-        """, (timestamp, conversation_id))
-
-
-def get_messages(conversation_id):
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT role, content, model, created_at
-            FROM messages
-            WHERE conversation_id = ?
-            ORDER BY id
-        """, (conversation_id,)).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-@app.route("/")
-def index():
-    return render_template("index.html", models=MODELS)
-
-
-@app.route("/conversations", methods=["GET"])
-def list_conversations():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT id, title, created_at, updated_at
-            FROM conversations
-            ORDER BY updated_at DESC
-        """).fetchall()
-
-    return jsonify([dict(row) for row in rows])
-
-
-@app.route("/conversations", methods=["POST"])
-def new_conversation():
-    conversation_id = create_conversation()
-
-    return jsonify({
-        "id": conversation_id,
-        "title": "محادثة جديدة"
-    })
-
-
-@app.route("/conversations/<conversation_id>", methods=["GET"])
-def load_conversation(conversation_id):
-    if not conversation_exists(conversation_id):
-        return jsonify({"error": "المحادثة غير موجودة"}), 404
-
-    return jsonify({
-        "id": conversation_id,
-        "messages": get_messages(conversation_id)
-    })
-
-
-@app.route("/conversations/<conversation_id>", methods=["DELETE"])
-def delete_conversation(conversation_id):
-    with get_db() as conn:
-        conn.execute(
-            "DELETE FROM messages WHERE conversation_id = ?",
-            (conversation_id,)
-        )
-        conn.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,)
-        )
-
-    return jsonify({"success": True})
-
-
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.get_json(silent=True) or {}
-
-    message = str(data.get("message", "")).strip()
-    model = data.get("model", MODELS[0])
-    conversation_id = data.get("conversation_id")
-
-    if not message:
-        return jsonify({"error": "اكتب رسالة أولاً"}), 400
-
-    if model not in MODELS:
-        return jsonify({"error": "النموذج غير موجود في القائمة"}), 400
-
-    # فحص المفتاح قبل محاولة الاتصال
-    if not API_KEY or client is None:
-        return jsonify({
-            "error": (
-                "مفتاح Gemini API غير موجود. "
-                "أضفه إلى متغير البيئة GEMINI_API_KEY ثم أعد تشغيل البرنامج."
-            )
-        }), 400
-
-    if not conversation_id or not conversation_exists(conversation_id):
-        conversation_id = create_conversation(message[:60])
-
-    # حفظ رسالة المستخدم تلقائياً
-    save_message(conversation_id, "user", message, model)
-
-    with get_db() as conn:
-        count = conn.execute("""
-            SELECT COUNT(*) AS total
-            FROM messages
-            WHERE conversation_id = ?
-        """, (conversation_id,)).fetchone()["total"]
-
-        if count == 1:
-            conn.execute("""
-                UPDATE conversations SET title = ?
-                WHERE id = ?
-            """, (message[:60], conversation_id))
-
-    history = get_messages(conversation_id)[:-1]
-
-    prompt_parts = [
-        "أنت مساعد ذكاء اصطناعي مفيد. أجب بلغة المستخدم.",
-        "سجل المحادثة السابقة:"
-    ]
-
-    for item in history:
-        speaker = "المستخدم" if item["role"] == "user" else "المساعد"
-        prompt_parts.append(f"{speaker}: {item['content']}")
-
-    prompt_parts.append(f"المستخدم: {message}")
-    prompt_parts.append("المساعد:")
-
-    prompt = "\n\n".join(prompt_parts)
-
-    request_id = str(uuid.uuid4())
-    cancel_event = threading.Event()
-
-    with requests_lock:
-        active_requests[request_id] = cancel_event
-
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt
-        )
-
-        if cancel_event.is_set():
-            return jsonify({
-                "cancelled": True,
-                "conversation_id": conversation_id
-            })
-
-        reply = getattr(response, "text", None)
-
-        if not reply:
-            reply = "لم يصل رد نصي من النموذج."
-
-        # حفظ رد المساعد تلقائياً
-        save_message(conversation_id, "assistant", reply, model)
-
-        return jsonify({
-            "reply": reply,
-            "model": model,
-            "conversation_id": conversation_id
-        })
-
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "conversation_id": conversation_id
-        }), 500
-
-    finally:
-        with requests_lock:
-            active_requests.pop(request_id, None)
-
-
-@app.route("/stop", methods=["POST"])
-def stop_request():
-    data = request.get_json(silent=True) or {}
-    request_id = data.get("request_id")
-
-    with requests_lock:
-        event = active_requests.get(request_id)
-
-        if event:
-            event.set()
-            return jsonify({"success": True})
-
-    return jsonify({
-        "success": False,
-        "message": "لا يوجد طلب نشط قابل للإلغاء."
-    })
-
-
-init_db()
-
-
-if __name__ == "__main__":
-    app.run(debug=False, threaded=True)
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #111318;
+            color: #f0f0f0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+        }
+
+        button, select, textarea {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        .sidebar {
+            width: 260px;
+            background: #191c23;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid #2b2e36;
+        }
+
+        .brand {
+            font-size: 21px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .new-chat {
+            width: 100%;
+            padding: 12px;
+            background: #303541;
+            border: 1px solid #454b58;
+            border-radius: 10px;
+            color: white;
+            margin-bottom: 18px;
+        }
+
+        .section-title {
+            color: #a3a8b4;
+            font-size: 13px;
+            margin: 8px 0;
+        }
+
+        #conversationList {
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .conversation {
+            padding: 11px;
+            margin-bottom: 5px;
+            border-radius: 8px;
+            cursor: pointer;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #d5d8df;
+        }
+
+        .conversation:hover,
+        .conversation.active {
+            background: #303541;
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .topbar {
+            padding: 14px 20px;
+            border-bottom: 1px solid #292d36;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .topbar h2 {
+            font-size: 18px;
+            margin: 0;
+        }
+
+        select {
+            background: #20242d;
+            color: white;
+            border: 1px solid #454b58;
+            padding: 9px;
+            border-radius: 8px;
+            max-width: 220px;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .welcome {
+            text-align: center;
+            margin: 15vh auto 0;
+            max-width: 600px;
+            color: #c3c7d0;
+        }
+
+        .welcome h1 {
+            color: white;
+        }
+
+        .message {
+            max-width: 850px;
+            margin: 0 auto 20px;
+            padding: 15px 18px;
+            border-radius: 13px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .user {
+            background: #272c37;
+        }
+
+        .assistant {
+            background: #191d25;
+            border: 1px solid #292e39;
+        }
+
+        .role {
+            color: #a8b8ff;
+            font-size: 12px;
+            margin-bottom: 7px;
+        }
+
+        .composer {
+            padding: 15px 20px 20px;
+            border-top: 1px solid #292d36;
+        }
+
+        .input-box {
+            max-width: 900px;
+            margin: auto;
+            background: #20242d;
+            border: 1px solid #414653;
+            border-radius: 14px;
+            padding: 10px;
+        }
+
+        textarea {
+            width: 100%;
+            resize: vertical;
+            min-height: 65px;
+            max-height: 200px;
+            border: none;
+            outline: none;
+            background: transparent;
+            color: white;
+            padding: 8px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .hint {
+            color: #999fac;
+            font-size: 12px;
+        }
+
+        .buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .send, .stop {
+            border: none;
+            border-radius: 8px;
+            padding: 10px 17px;
+            color: white;
+        }
+
+        .send {
+            background: #5267d8;
+        }
+
+        .send:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .stop {
+            background: #c43e48;
+            display: none;
+        }
+
+        #status {
+            color: #b4bbca;
+            font-size: 13px;
+            max-width: 900px;
+            margin: 8px auto 0;
+        }
+
+        @media (max-width: 700px) {
+            .sidebar {
+                width: 150px;
+                padding: 9px;
+            }
+
+            .brand {
+                font-size: 16px;
+            }
+
+            #messages {
+                padding: 12px;
+            }
+
+            .topbar {
+                padding: 12px;
+            }
+
+            select {
+                max-width: 150px;
+            }
+
+            .composer {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <aside class="sidebar">
+        <div class="brand">AI Assistant</div>
+
+        <button class="new-chat" onclick="newChat()">
+            + محادثة جديدة
+        </button>
+
+        <div class="section-title">المحادثات السابقة</div>
+        <div id="conversationList"></div>
+    </aside>
+
+    <main class="main">
+        <header class="topbar">
+            <h2>المساعد الذكي</h2>
+
+            <select id="model">
+                {% for model in models %}
+                <option value="{{ model }}">{{ model }}</option>
+                {% endfor %}
+            </select>
+        </header>
+
+        <section id="messages">
+            <div class="welcome" id="welcome">
+                <h1>كيف يمكنني مساعدتك؟</h1>
+                <p>اكتب سؤالك للبدء.</p>
+            </div>
+        </section>
+
+        <footer class="composer">
+            <div class="input-box">
+                <textarea
+                    id="messageInput"
+                    placeholder="اكتب رسالتك هنا..."
+                    onkeydown="handleKey(event)"
+                ></textarea>
+
+                <div class="controls">
+                    <span class="hint">
+                        Enter للإرسال · Shift + Enter لسطر جديد
+                    </span>
+
+                    <div class="buttons">
+                        <button id="stopButton" class="stop"
+                                onclick="stopGeneration()">
+                            ⏹ إيقاف
+                        </button>
+
+                        <button id="sendButton" class="send"
+                                onclick="sendMessage()">
+                            إرسال ↑
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="status"></div>
+        </footer>
+    </main>
+
+    <script>
+        let currentConversationId = null;
+        let isGenerating = false;
+        let activeController = null;
+        let activeRequestId = null;
+        let stopRequested = false;
+
+        const messagesElement = document.getElementById("messages");
+        const inputElement = document.getElementById("messageInput");
+        const sendButton = document.getElementById("sendButton");
+        const stopButton = document.getElementById("stopButton");
+        const statusElement = document.getElementById("status");
+
+        function addMessage(role, content, model = "") {
+            const welcome = document.getElementById("welcome");
+            if (welcome) welcome.remove();
+
+            const box = document.createElement("div");
+            box.className = "message " + role;
+
+            const roleLabel = document.createElement("div");
+            roleLabel.className = "role";
+            roleLabel.textContent =
+                role === "user" ? "أنت" :
+                "المساعد" + (model ? " · " + model : "");
+
+            const text = document.createElement("div");
+            text.textContent = content;
+
+            box.appendChild(roleLabel);
+            box.appendChild(text);
+            messagesElement.appendChild(box);
+
+            messagesElement.scrollTop = messagesElement.scrollHeight;
+
+            return box;
+        }
+
+        function showWelcome() {
+            messagesElement.innerHTML = `
+                <div class="welcome" id="welcome">
+                    <h1>كيف يمكنني مساعدتك؟</h1>
+                    <p>اكتب سؤالك للبدء.</p>
+                </div>
+            `;
+        }
+
+        async function refreshConversations() {
+            try {
+                const response = await fetch("/conversations");
+                const conversations = await response.json();
+
+                const list = document.getElementById("conversationList");
+                list.innerHTML = "";
+
+                conversations.forEach(conversation => {
+                    const item = document.createElement("div");
+                    item.className = "conversation";
+
+                    if (conversation.id === currentConversationId) {
+                        item.classList.add("active");
+                    }
+
+                    item.textContent = conversation.title;
+                    item.title = conversation.title;
+
+                    item.onclick = () => loadConversation(conversation.id);
+
+                    list.appendChild(item);
+                });
+            } catch (error) {
+                statusElement.textContent =
+                    "تعذر تحميل قائمة المحادثات.";
+            }
+        }
+
+        async function newChat() {
+            if (isGenerating) {
+                statusElement.textContent =
+                    "أوقف الإجابة الحالية أولاً قبل إنشاء محادثة جديدة.";
+                return;
+            }
+
+            try {
+                const response = await fetch("/conversations", {
+                    method: "POST"
+                });
+
+                const data = await response.json();
+                currentConversationId = data.id;
+
+                showWelcome();
+                statusElement.textContent = "";
+                await refreshConversations();
+                inputElement.focus();
+            } catch (error) {
+                statusElement.textContent =
+                    "تعذر إنشاء محادثة جديدة.";
+            }
+        }
+
+        async function loadConversation(id) {
+            if (isGenerating) {
+                statusElement.textContent =
+                    "أوقف الإجابة الحالية أولاً.";
+                return;
+            }
+
+            try {
+                const response = await fetch(
+                    "/conversations/" + encodeURIComponent(id)
+                );
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || "فشل تحميل المحادثة");
+                }
+
+                currentConversationId = data.id;
+                messagesElement.innerHTML = "";
+
+                if (!data.messages.length) {
+                    showWelcome();
+                } else {
+                    data.messages.forEach(message => {
+                        addMessage(
+                            message.role === "assistant" ? "assistant" : "user",
+                            message.content,
+                            message.model || ""
+                        );
+                    });
+                }
+
+                statusElement.textContent = "";
+                await refreshConversations();
+            } catch (error) {
+                statusElement.textContent =
+                    "تعذر تحميل المحادثة: " + error.message;
+            }
+        }
+
+        async function sendMessage() {
+            const message = inputElement.value.trim();
+
+            if (!message || isGenerating) return;
+
+            if (!currentConversationId) {
+                const response = await fetch("/conversations", {
+                    method: "POST"
+                });
+
+                const data = await response.json();
+                currentConversationId = data.id;
+            }
+
+            const model = document.getElementById("model").value;
+
+            addMessage("user", message);
+            inputElement.value = "";
+
+            isGenerating = true;
+            stopRequested = false;
+            activeController = new AbortController();
+            activeRequestId = null;
+
+            sendButton.disabled = true;
+            stopButton.style.display = "inline-block";
+            statusElement.textContent = "جارٍ التفكير...";
+
+            // مؤشر بصري للإجابة قيد الانتظار
+            const pendingBox = addMessage("assistant", "جارٍ إنشاء الإجابة...");
+
+            try {
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    signal: activeController.signal,
+                    body: JSON.stringify({
+                        message: message,
+                        model: model,
+                        conversation_id: currentConversationId
+                    })
+                });
+
+                const data = await response.json();
+
+                if (stopRequested) {
+                    pendingBox.querySelector("div:last-child").textContent =
+                        "تم إيقاف الانتظار. قد يستمر الطلب على الخادم.";
+                    return;
+                }
+
+                if (!response.ok || data.error) {
+                    pendingBox.querySelector("div:last-child").textContent =
+                        "حدث خطأ: " + (data.error || "تعذر الحصول على الإجابة");
+                    return;
+                }
+
+                currentConversationId = data.conversation_id;
+                pendingBox.querySelector("div:last-child").textContent =
+                    data.reply || "لم يصل رد نصي.";
+
+                pendingBox.querySelector(".role").textContent =
+                    "المساعد · " + (data.model || model);
+
+                statusElement.textContent = "";
+            } catch (error) {
+                if (stopRequested || error.name === "AbortError") {
+                    pendingBox.querySelector("div:last-child").textContent =
+                        "تم إيقاف انتظار الإجابة.";
+                } else {
+                    pendingBox.querySelector("div:last-child").textContent =
+                        "تعذر الاتصال: " + error.message;
+                }
+            } finally {
+                isGenerating = false;
+                activeController = null;
+                activeRequestId = null;
+                sendButton.disabled = false;
+                stopButton.style.display = "none";
+
+                if (!stopRequested) {
+                    statusElement.textContent = "";
+                }
+
+                await refreshConversations();
+            }
+        }
+
+        async function stopGeneration() {
+            if (!isGenerating) return;
+
+            stopRequested = true;
+            statusElement.textContent = "جارٍ إيقاف الانتظار...";
+
+            // إلغاء انتظار المتصفح فوراً.
+            if (activeController) {
+                activeController.abort();
+            }
+
+            // طلب إلغاء من الخادم إذا توفر معرّف الطلب.
+            if (activeRequestId) {
+                try {
+                    await fetch("/stop", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            request_id: activeRequestId
+                        })
+                    });
+                } catch (error) {
+                    // ربما أُلغي اتصال المتصفح بالفعل.
+                }
+            }
+
+            statusElement.textContent =
+                "أُوقف انتظار الإجابة. قد تستمر المعالجة على خوادم المزود.";
+        }
+
+        function handleKey(event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        async function initialize() {
+            await refreshConversations();
+
+            const response = await fetch("/conversations");
+            const conversations = await response.json();
+
+            if (conversations.length) {
+                await loadConversation(conversations[0].id);
+            } else {
+                await newChat();
+            }
+        }
+
+        initialize();
+    </script>
+</body>
+</html>
