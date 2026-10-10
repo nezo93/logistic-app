@@ -1,17 +1,21 @@
-Traceback (most recent call last):
-  File "C:\Users\pc\Desktop\AI_Assistant\app.py", line 982, in chat
-    previous_messages = get_conversation_messages(
-        conversation_id
-    )
-  File "C:\Users\pc\Desktop\AI_Assistant\app.py", line 707, in get_conversation_messages
-    rows = db.execute(
-           ~~~~~~~~~~^
-        """
-        ^^^
-    ...<5 lines>...
-        (conversation_id,),
-        ^^^^^^^^^^^^^^^^^^^
-    ).fetchall()
-    ^
-sqlite3.OperationalError: no such column: provider
-127.0.0.1 - - [09/Oct/2026 02:50:39] "POST /chat HTTP/1.1" 500 -
+Database tables:
+
+Table: conversations
+  - id
+  - title
+  - created_at
+  - updated_at
+
+Table: messages
+  - id
+  - conversation_id
+  - role
+  - content
+  - model
+  - created_at
+
+Table: sqlite_sequence
+  - name
+  - seq
+
+Database inspection completed.
