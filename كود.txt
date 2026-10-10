@@ -1,21 +1,35 @@
-Database tables:
+import sqlite3
+from pathlib import Path
 
-Table: conversations
-  - id
-  - title
-  - created_at
-  - updated_at
+DB_PATH = Path(__file__).resolve().parent / "assistant.db"
 
-Table: messages
-  - id
-  - conversation_id
-  - role
-  - content
-  - model
-  - created_at
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
 
-Table: sqlite_sequence
-  - name
-  - seq
+try:
+    columns = [
+        row[1]
+        for row in cursor.execute(
+            "PRAGMA table_info(messages)"
+        ).fetchall()
+    ]
 
-Database inspection completed.
+    if "provider" not in columns:
+        cursor.execute(
+            "ALTER TABLE messages ADD COLUMN provider TEXT"
+        )
+        print("SUCCESS: provider column added.")
+
+    else:
+        print("INFO: provider column already exists.")
+
+    conn.commit()
+
+    print("Database migration completed successfully.")
+
+except sqlite3.Error as error:
+    conn.rollback()
+    print(f"Database error: {error}")
+
+finally:
+    conn.close()
