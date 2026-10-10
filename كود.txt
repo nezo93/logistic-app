@@ -84,7 +84,7 @@ def get_db():
 
 def init_db():
     with get_db() as db:
-
+        # Create tables if they do not exist.
         db.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,19 +100,47 @@ def init_db():
                 conversation_id INTEGER NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                provider TEXT,
                 model TEXT,
                 created_at TEXT NOT NULL,
-
                 FOREIGN KEY (conversation_id)
                     REFERENCES conversations(id)
                     ON DELETE CASCADE
             )
         """)
 
+        # Read the actual schema of the existing database.
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "PRAGMA table_info(messages)"
+            ).fetchall()
+        }
+
+        # Migrate old databases without deleting existing messages.
+        if "provider" not in columns:
+            db.execute(
+                "ALTER TABLE messages ADD COLUMN provider TEXT"
+            )
+
+        if "model" not in columns:
+            db.execute(
+                "ALTER TABLE messages ADD COLUMN model TEXT"
+            )
+
+        if "created_at" not in columns:
+            db.execute(
+                "ALTER TABLE messages ADD COLUMN created_at TEXT"
+            )
+
+            # Preserve compatibility with older message records.
+            db.execute("""
+                UPDATE messages
+                SET created_at = ?
+                WHERE created_at IS NULL
+            """, (datetime.now().isoformat(timespec="seconds"),))
+
         db.execute("""
-            CREATE INDEX IF NOT EXISTS
-            idx_messages_conversation
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation
             ON messages(conversation_id, id)
         """)
 
