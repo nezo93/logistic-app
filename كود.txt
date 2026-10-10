@@ -29,6 +29,7 @@
 
         .sidebar {
             width: 260px;
+            min-width: 180px;
             background: #191c23;
             padding: 16px;
             display: flex;
@@ -52,6 +53,10 @@
             margin-bottom: 18px;
         }
 
+        .new-chat:hover {
+            background: #414858;
+        }
+
         .section-title {
             color: #a3a8b4;
             font-size: 13px;
@@ -72,6 +77,7 @@
             text-overflow: ellipsis;
             white-space: nowrap;
             color: #d5d8df;
+            font-size: 14px;
         }
 
         .conversation:hover,
@@ -106,13 +112,14 @@
             border: 1px solid #454b58;
             padding: 9px;
             border-radius: 8px;
-            max-width: 220px;
+            max-width: 240px;
         }
 
         #messages {
             flex: 1;
             overflow-y: auto;
             padding: 24px;
+            scroll-behavior: smooth;
         }
 
         .welcome {
@@ -127,17 +134,17 @@
         }
 
         .message {
-            max-width: 850px;
+            max-width: 900px;
             margin: 0 auto 20px;
             padding: 15px 18px;
             border-radius: 13px;
             line-height: 1.8;
-            white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
 
         .user {
             background: #272c37;
+            white-space: pre-wrap;
         }
 
         .assistant {
@@ -148,7 +155,83 @@
         .role {
             color: #a8b8ff;
             font-size: 12px;
-            margin-bottom: 7px;
+            margin-bottom: 8px;
+        }
+
+        .message-text {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        /* كتل الأكواد البرمجية */
+
+        .code-container {
+            direction: ltr;
+            text-align: left;
+            margin: 14px 0;
+            border: 1px solid #3a3f4b;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #0d1117;
+            max-width: 100%;
+        }
+
+        .code-header {
+            display: flex;
+            direction: ltr;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: #222733;
+            border-bottom: 1px solid #343a46;
+            color: #c5cad5;
+            font-size: 12px;
+        }
+
+        .code-language {
+            direction: ltr;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .copy-code {
+            flex-shrink: 0;
+            background: #343b49;
+            color: white;
+            border: 1px solid #50596a;
+            border-radius: 6px;
+            padding: 6px 11px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .copy-code:hover {
+            background: #4b5568;
+        }
+
+        .copy-code.copied {
+            background: #176b45;
+            border-color: #26865a;
+        }
+
+        .code-container pre {
+            margin: 0;
+            padding: 15px;
+            overflow-x: auto;
+            direction: ltr;
+            text-align: left;
+            white-space: pre;
+            tab-size: 4;
+        }
+
+        .code-container code {
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #e6edf3;
+            white-space: pre;
+            direction: ltr;
         }
 
         .composer {
@@ -175,6 +258,7 @@
             background: transparent;
             color: white;
             padding: 8px;
+            direction: auto;
         }
 
         .controls {
@@ -206,6 +290,10 @@
             background: #5267d8;
         }
 
+        .send:hover {
+            background: #6479ed;
+        }
+
         .send:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -216,21 +304,32 @@
             display: none;
         }
 
+        .stop:hover {
+            background: #e04b56;
+        }
+
         #status {
             color: #b4bbca;
             font-size: 13px;
             max-width: 900px;
             margin: 8px auto 0;
+            white-space: pre-wrap;
         }
 
         @media (max-width: 700px) {
             .sidebar {
-                width: 150px;
+                width: 145px;
+                min-width: 115px;
                 padding: 9px;
             }
 
             .brand {
-                font-size: 16px;
+                font-size: 15px;
+            }
+
+            .new-chat {
+                font-size: 12px;
+                padding: 9px 4px;
             }
 
             #messages {
@@ -239,20 +338,39 @@
 
             .topbar {
                 padding: 12px;
+                flex-wrap: wrap;
+            }
+
+            .topbar h2 {
+                font-size: 15px;
             }
 
             select {
-                max-width: 150px;
+                max-width: 160px;
+                font-size: 12px;
             }
 
             .composer {
                 padding: 10px;
+            }
+
+            .message {
+                padding: 12px;
+            }
+
+            .code-container code {
+                font-size: 12px;
+            }
+
+            .hint {
+                font-size: 10px;
             }
         }
     </style>
 </head>
 
 <body>
+
     <aside class="sidebar">
         <div class="brand">AI Assistant</div>
 
@@ -261,10 +379,12 @@
         </button>
 
         <div class="section-title">المحادثات السابقة</div>
+
         <div id="conversationList"></div>
     </aside>
 
     <main class="main">
+
         <header class="topbar">
             <h2>المساعد الذكي</h2>
 
@@ -283,7 +403,9 @@
         </section>
 
         <footer class="composer">
+
             <div class="input-box">
+
                 <textarea
                     id="messageInput"
                     placeholder="اكتب رسالتك هنا..."
@@ -291,313 +413,511 @@
                 ></textarea>
 
                 <div class="controls">
+
                     <span class="hint">
                         Enter للإرسال · Shift + Enter لسطر جديد
                     </span>
 
                     <div class="buttons">
-                        <button id="stopButton" class="stop"
-                                onclick="stopGeneration()">
+
+                        <button
+                            id="stopButton"
+                            class="stop"
+                            onclick="stopGeneration()"
+                        >
                             ⏹ إيقاف
                         </button>
 
-                        <button id="sendButton" class="send"
-                                onclick="sendMessage()">
+                        <button
+                            id="sendButton"
+                            class="send"
+                            onclick="sendMessage()"
+                        >
                             إرسال ↑
                         </button>
+
                     </div>
                 </div>
             </div>
 
             <div id="status"></div>
+
         </footer>
     </main>
 
-    <script>
-        let currentConversationId = null;
-        let isGenerating = false;
-        let activeController = null;
-        let activeRequestId = null;
-        let stopRequested = false;
+<script>
+    let currentConversationId = null;
+    let isGenerating = false;
+    let activeController = null;
+    let stopRequested = false;
 
-        const messagesElement = document.getElementById("messages");
-        const inputElement = document.getElementById("messageInput");
-        const sendButton = document.getElementById("sendButton");
-        const stopButton = document.getElementById("stopButton");
-        const statusElement = document.getElementById("status");
+    const messagesElement = document.getElementById("messages");
+    const inputElement = document.getElementById("messageInput");
+    const sendButton = document.getElementById("sendButton");
+    const stopButton = document.getElementById("stopButton");
+    const statusElement = document.getElementById("status");
 
-        function addMessage(role, content, model = "") {
-            const welcome = document.getElementById("welcome");
-            if (welcome) welcome.remove();
 
-            const box = document.createElement("div");
-            box.className = "message " + role;
+    // نسخ النص إلى الحافظة
+    async function copyText(text, button) {
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                // طريقة احتياطية للمتصفحات التي لا تدعم Clipboard API
+                const temporary = document.createElement("textarea");
 
-            const roleLabel = document.createElement("div");
-            roleLabel.className = "role";
-            roleLabel.textContent =
-                role === "user" ? "أنت" :
-                "المساعد" + (model ? " · " + model : "");
+                temporary.value = text;
+                temporary.style.position = "fixed";
+                temporary.style.left = "-9999px";
+                temporary.style.top = "0";
 
-            const text = document.createElement("div");
-            text.textContent = content;
+                document.body.appendChild(temporary);
+                temporary.focus();
+                temporary.select();
 
-            box.appendChild(roleLabel);
-            box.appendChild(text);
-            messagesElement.appendChild(box);
+                const successful = document.execCommand("copy");
 
-            messagesElement.scrollTop = messagesElement.scrollHeight;
+                temporary.remove();
 
-            return box;
+                if (!successful) {
+                    throw new Error("تعذر النسخ");
+                }
+            }
+
+            const oldText = button.textContent;
+
+            button.textContent = "✓ تم النسخ";
+            button.classList.add("copied");
+
+            setTimeout(() => {
+                button.textContent = "📋 نسخ";
+                button.classList.remove("copied");
+            }, 1800);
+
+        } catch (error) {
+            button.textContent = "تعذر النسخ";
+
+            setTimeout(() => {
+                button.textContent = "📋 نسخ";
+            }, 1800);
         }
+    }
 
-        function showWelcome() {
-            messagesElement.innerHTML = `
-                <div class="welcome" id="welcome">
-                    <h1>كيف يمكنني مساعدتك؟</h1>
-                    <p>اكتب سؤالك للبدء.</p>
-                </div>
-            `;
-        }
 
-        async function refreshConversations() {
-            try {
-                const response = await fetch("/conversations");
-                const conversations = await response.json();
+    // عرض النص وإنشاء زر نسخ لكل كتلة كود
+    function renderMessageContent(element, content) {
+        element.replaceChildren();
 
-                const list = document.getElementById("conversationList");
-                list.innerHTML = "";
+        const parts = String(content).split(/(```[\s\S]*?```)/g);
 
-                conversations.forEach(conversation => {
-                    const item = document.createElement("div");
-                    item.className = "conversation";
+        parts.forEach(part => {
 
-                    if (conversation.id === currentConversationId) {
-                        item.classList.add("active");
+            if (part.startsWith("```") && part.endsWith("```")) {
+
+                const inner = part.slice(3, -3);
+
+                const firstNewline = inner.indexOf("\n");
+
+                let language = "Code";
+                let code = inner;
+
+                if (firstNewline !== -1) {
+                    const possibleLanguage =
+                        inner.slice(0, firstNewline).trim();
+
+                    if (
+                        possibleLanguage &&
+                        !possibleLanguage.includes(" ") &&
+                        possibleLanguage.length < 30
+                    ) {
+                        language = possibleLanguage;
+                        code = inner.slice(firstNewline + 1);
                     }
+                }
 
-                    item.textContent = conversation.title;
-                    item.title = conversation.title;
+                const container = document.createElement("div");
+                container.className = "code-container";
 
-                    item.onclick = () => loadConversation(conversation.id);
+                const header = document.createElement("div");
+                header.className = "code-header";
 
-                    list.appendChild(item);
-                });
-            } catch (error) {
-                statusElement.textContent =
-                    "تعذر تحميل قائمة المحادثات.";
-            }
-        }
+                const languageLabel = document.createElement("span");
+                languageLabel.className = "code-language";
+                languageLabel.textContent = language;
 
-        async function newChat() {
-            if (isGenerating) {
-                statusElement.textContent =
-                    "أوقف الإجابة الحالية أولاً قبل إنشاء محادثة جديدة.";
-                return;
-            }
+                const copyButton = document.createElement("button");
+                copyButton.className = "copy-code";
+                copyButton.textContent = "📋 نسخ";
 
-            try {
-                const response = await fetch("/conversations", {
-                    method: "POST"
+                copyButton.addEventListener("click", () => {
+                    copyText(code, copyButton);
                 });
 
-                const data = await response.json();
-                currentConversationId = data.id;
+                const pre = document.createElement("pre");
+                const codeElement = document.createElement("code");
 
-                showWelcome();
-                statusElement.textContent = "";
-                await refreshConversations();
-                inputElement.focus();
-            } catch (error) {
-                statusElement.textContent =
-                    "تعذر إنشاء محادثة جديدة.";
+                // استخدام textContent لمنع تنفيذ الكود كـ HTML
+                codeElement.textContent = code;
+
+                header.appendChild(languageLabel);
+                header.appendChild(copyButton);
+
+                pre.appendChild(codeElement);
+
+                container.appendChild(header);
+                container.appendChild(pre);
+
+                element.appendChild(container);
+
+            } else if (part) {
+
+                const textNode = document.createElement("span");
+                textNode.className = "message-text";
+                textNode.textContent = part;
+
+                element.appendChild(textNode);
             }
+        });
+
+        messagesElement.scrollTop = messagesElement.scrollHeight;
+    }
+
+
+    // إضافة رسالة إلى الواجهة
+    function addMessage(role, content, model = "") {
+        const welcome = document.getElementById("welcome");
+
+        if (welcome) {
+            welcome.remove();
         }
 
-        async function loadConversation(id) {
-            if (isGenerating) {
-                statusElement.textContent =
-                    "أوقف الإجابة الحالية أولاً.";
-                return;
-            }
+        const box = document.createElement("div");
+        box.className = "message " + role;
 
-            try {
-                const response = await fetch(
-                    "/conversations/" + encodeURIComponent(id)
+        const roleLabel = document.createElement("div");
+        roleLabel.className = "role";
+
+        roleLabel.textContent =
+            role === "user"
+                ? "أنت"
+                : "المساعد" + (model ? " · " + model : "");
+
+        const text = document.createElement("div");
+        text.className = "message-content";
+
+        box.appendChild(roleLabel);
+        box.appendChild(text);
+
+        messagesElement.appendChild(box);
+
+        renderMessageContent(text, content);
+
+        return box;
+    }
+
+
+    function showWelcome() {
+        messagesElement.innerHTML = `
+            <div class="welcome" id="welcome">
+                <h1>كيف يمكنني مساعدتك؟</h1>
+                <p>اكتب سؤالك للبدء.</p>
+            </div>
+        `;
+    }
+
+
+    // تحميل قائمة المحادثات
+    async function refreshConversations() {
+        try {
+            const response = await fetch("/conversations");
+            const conversations = await response.json();
+
+            const list = document.getElementById("conversationList");
+            list.innerHTML = "";
+
+            conversations.forEach(conversation => {
+                const item = document.createElement("div");
+
+                item.className = "conversation";
+
+                if (conversation.id === currentConversationId) {
+                    item.classList.add("active");
+                }
+
+                item.textContent = conversation.title;
+                item.title = conversation.title;
+
+                item.onclick = () => loadConversation(conversation.id);
+
+                list.appendChild(item);
+            });
+
+        } catch (error) {
+            statusElement.textContent =
+                "تعذر تحميل قائمة المحادثات.";
+        }
+    }
+
+
+    // إنشاء محادثة جديدة
+    async function newChat() {
+        if (isGenerating) {
+            statusElement.textContent =
+                "أوقف الإجابة الحالية أولاً قبل إنشاء محادثة جديدة.";
+            return;
+        }
+
+        try {
+            const response = await fetch("/conversations", {
+                method: "POST"
+            });
+
+            const data = await response.json();
+
+            currentConversationId = data.id;
+
+            showWelcome();
+
+            statusElement.textContent = "";
+
+            await refreshConversations();
+
+            inputElement.focus();
+
+        } catch (error) {
+            statusElement.textContent =
+                "تعذر إنشاء محادثة جديدة.";
+        }
+    }
+
+
+    // تحميل محادثة محفوظة
+    async function loadConversation(id) {
+        if (isGenerating) {
+            statusElement.textContent =
+                "أوقف الإجابة الحالية أولاً.";
+            return;
+        }
+
+        try {
+            const response = await fetch(
+                "/conversations/" + encodeURIComponent(id)
+            );
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error || "فشل تحميل المحادثة"
                 );
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error || "فشل تحميل المحادثة");
-                }
-
-                currentConversationId = data.id;
-                messagesElement.innerHTML = "";
-
-                if (!data.messages.length) {
-                    showWelcome();
-                } else {
-                    data.messages.forEach(message => {
-                        addMessage(
-                            message.role === "assistant" ? "assistant" : "user",
-                            message.content,
-                            message.model || ""
-                        );
-                    });
-                }
-
-                statusElement.textContent = "";
-                await refreshConversations();
-            } catch (error) {
-                statusElement.textContent =
-                    "تعذر تحميل المحادثة: " + error.message;
             }
+
+            currentConversationId = data.id;
+
+            messagesElement.innerHTML = "";
+
+            if (!data.messages.length) {
+                showWelcome();
+            } else {
+                data.messages.forEach(message => {
+                    addMessage(
+                        message.role === "assistant"
+                            ? "assistant"
+                            : "user",
+                        message.content,
+                        message.model || ""
+                    );
+                });
+            }
+
+            statusElement.textContent = "";
+
+            await refreshConversations();
+
+        } catch (error) {
+            statusElement.textContent =
+                "تعذر تحميل المحادثة: " + error.message;
+        }
+    }
+
+
+    // إرسال الرسالة إلى Gemini
+    async function sendMessage() {
+        const message = inputElement.value.trim();
+
+        if (!message || isGenerating) {
+            return;
         }
 
-        async function sendMessage() {
-            const message = inputElement.value.trim();
-
-            if (!message || isGenerating) return;
-
+        try {
             if (!currentConversationId) {
                 const response = await fetch("/conversations", {
                     method: "POST"
                 });
 
                 const data = await response.json();
+
                 currentConversationId = data.id;
             }
 
             const model = document.getElementById("model").value;
 
             addMessage("user", message);
+
             inputElement.value = "";
 
             isGenerating = true;
             stopRequested = false;
+
             activeController = new AbortController();
-            activeRequestId = null;
 
             sendButton.disabled = true;
             stopButton.style.display = "inline-block";
+
             statusElement.textContent = "جارٍ التفكير...";
 
-            // مؤشر بصري للإجابة قيد الانتظار
-            const pendingBox = addMessage("assistant", "جارٍ إنشاء الإجابة...");
+            const pendingBox = addMessage(
+                "assistant",
+                "جارٍ إنشاء الإجابة..."
+            );
 
-            try {
-                const response = await fetch("/chat", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json"
-                    },
-                    signal: activeController.signal,
-                    body: JSON.stringify({
-                        message: message,
-                        model: model,
-                        conversation_id: currentConversationId
-                    })
-                });
+            const response = await fetch("/chat", {
+                method: "POST",
 
-                const data = await response.json();
+                headers: {
+                    "Content-Type": "application/json"
+                },
 
-                if (stopRequested) {
-                    pendingBox.querySelector("div:last-child").textContent =
-                        "تم إيقاف الانتظار. قد يستمر الطلب على الخادم.";
-                    return;
-                }
+                signal: activeController.signal,
 
-                if (!response.ok || data.error) {
-                    pendingBox.querySelector("div:last-child").textContent =
-                        "حدث خطأ: " + (data.error || "تعذر الحصول على الإجابة");
-                    return;
-                }
+                body: JSON.stringify({
+                    message: message,
+                    model: model,
+                    conversation_id: currentConversationId
+                })
+            });
 
-                currentConversationId = data.conversation_id;
-                pendingBox.querySelector("div:last-child").textContent =
-                    data.reply || "لم يصل رد نصي.";
+            const data = await response.json();
 
-                pendingBox.querySelector(".role").textContent =
-                    "المساعد · " + (data.model || model);
+            const contentElement =
+                pendingBox.querySelector(".message-content");
 
+            if (stopRequested) {
+                renderMessageContent(
+                    contentElement,
+                    "تم إيقاف انتظار الإجابة. قد يستمر الطلب على الخادم."
+                );
+
+                return;
+            }
+
+            if (!response.ok || data.error) {
+                renderMessageContent(
+                    contentElement,
+                    "حدث خطأ: " +
+                    (data.error || "تعذر الحصول على الإجابة")
+                );
+
+                return;
+            }
+
+            currentConversationId = data.conversation_id;
+
+            renderMessageContent(
+                contentElement,
+                data.reply || "لم يصل رد نصي."
+            );
+
+            pendingBox.querySelector(".role").textContent =
+                "المساعد · " + (data.model || model);
+
+            statusElement.textContent = "";
+
+        } catch (error) {
+
+            if (stopRequested || error.name === "AbortError") {
+                statusElement.textContent =
+                    "تم إيقاف انتظار الإجابة.";
+
+            } else {
+                statusElement.textContent =
+                    "تعذر الاتصال: " + error.message;
+            }
+
+        } finally {
+
+            isGenerating = false;
+            activeController = null;
+
+            sendButton.disabled = false;
+            stopButton.style.display = "none";
+
+            if (!stopRequested) {
                 statusElement.textContent = "";
-            } catch (error) {
-                if (stopRequested || error.name === "AbortError") {
-                    pendingBox.querySelector("div:last-child").textContent =
-                        "تم إيقاف انتظار الإجابة.";
-                } else {
-                    pendingBox.querySelector("div:last-child").textContent =
-                        "تعذر الاتصال: " + error.message;
-                }
-            } finally {
-                isGenerating = false;
-                activeController = null;
-                activeRequestId = null;
-                sendButton.disabled = false;
-                stopButton.style.display = "none";
-
-                if (!stopRequested) {
-                    statusElement.textContent = "";
-                }
-
-                await refreshConversations();
-            }
-        }
-
-        async function stopGeneration() {
-            if (!isGenerating) return;
-
-            stopRequested = true;
-            statusElement.textContent = "جارٍ إيقاف الانتظار...";
-
-            // إلغاء انتظار المتصفح فوراً.
-            if (activeController) {
-                activeController.abort();
             }
 
-            // طلب إلغاء من الخادم إذا توفر معرّف الطلب.
-            if (activeRequestId) {
-                try {
-                    await fetch("/stop", {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({
-                            request_id: activeRequestId
-                        })
-                    });
-                } catch (error) {
-                    // ربما أُلغي اتصال المتصفح بالفعل.
-                }
-            }
-
-            statusElement.textContent =
-                "أُوقف انتظار الإجابة. قد تستمر المعالجة على خوادم المزود.";
-        }
-
-        function handleKey(event) {
-            if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                sendMessage();
-            }
-        }
-
-        async function initialize() {
             await refreshConversations();
+        }
+    }
 
+
+    // إيقاف انتظار الإجابة
+    async function stopGeneration() {
+        if (!isGenerating) {
+            return;
+        }
+
+        stopRequested = true;
+
+        statusElement.textContent =
+            "جارٍ إيقاف الانتظار...";
+
+        if (activeController) {
+            activeController.abort();
+        }
+
+        statusElement.textContent =
+            "أُوقف انتظار الإجابة. قد تستمر المعالجة على خوادم المزود.";
+    }
+
+
+    // Enter للإرسال و Shift+Enter لسطر جديد
+    function handleKey(event) {
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.isComposing
+        ) {
+            event.preventDefault();
+            sendMessage();
+        }
+    }
+
+
+    // بدء تشغيل الواجهة
+    async function initialize() {
+        await refreshConversations();
+
+        try {
             const response = await fetch("/conversations");
             const conversations = await response.json();
 
-            if (conversations.length) {
+            if (conversations.length > 0) {
                 await loadConversation(conversations[0].id);
             } else {
                 await newChat();
             }
-        }
 
-        initialize();
-    </script>
+        } catch (error) {
+            statusElement.textContent =
+                "تعذر تحميل المحادثات.";
+        }
+    }
+
+
+    initialize();
+</script>
+
 </body>
 </html>
