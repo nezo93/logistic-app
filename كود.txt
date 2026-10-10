@@ -1,159 +1,472 @@
+from flask import Flask, render_template, request, jsonify
+from google import genai
+import sqlite3
 import os
 import json
-import sqlite3
 import requests
-
-from flask import Flask, request, jsonify, render_template_string
+import threading
+import uuid
+from datetime import datetime
 
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "ai_assistant.db")
+DB_FILE = os.path.join(BASE_DIR, "assistant.db")
+KEYS_FILE = os.path.join(BASE_DIR, "api_keys.json")
 
 PROVIDERS = {
-    "openai": {
-        "name": "ChatGPT",
-        "key_url": "https://platform.openai.com/api-keys",
+    "gemini": {
+        "name": "Google Gemini",
+        "env": "GEMINI_API_KEY",
     },
     "anthropic": {
         "name": "Claude",
-        "key_url": "https://console.anthropic.com/settings/keys",
+        "env": "ANTHROPIC_API_KEY",
     },
-    "gemini": {
-        "name": "Gemini",
-        "key_url": "https://aistudio.google.com/apikey",
+    "openai": {
+        "name": "ChatGPT",
+        "env": "OPENAI_API_KEY",
     },
 }
 
+# تُستخدم هذه القائمة عند الحاجة إلى عرض أولي فقط.
+# القائمة الحقيقية تُجلب من واجهات الشركات.
+MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+]
 
-def db():
-    conn = sqlite3.connect(DB_PATH)
+active_requests = {}
+requests_lock = threading.Lock()
+
+
+# ==================================================
+# API KEYS
+# ==================================================
+
+def load_keys():
+    keys = {provider: "" for provider in PROVIDERS}
+
+    if os.path.isfile(KEYS_FILE):
+        try:
+            with open(KEYS_FILE, "r", encoding="utf-8") as file:
+                saved = json.load(file)
+
+            for provider in PROVIDERS:
+                keys[provider] = str(
+                    saved.get(provider, "")
+                ).strip()
+
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # متغيرات البيئة بديلة إذا لم يوجد مفتاح محفوظ.
+    for provider, settings in PROVIDERS.items():
+        if not keys[provider]:
+            keys[provider] = os.environ.get(
+                settings["env"], ""
+            ).strip()
+
+    return keys
+
+
+def get_key(provider):
+    return load_keys().get(provider, "")
+
+
+def save_keys(keys):
+    temporary_file = KEYS_FILE + ".tmp"
+
+    with open(temporary_file, "w", encoding="utf-8") as file:
+        json.dump(keys, file, ensure_ascii=False, indent=2)
+
+    os.replace(temporary_file, KEYS_FILE)
+
+    try:
+        os.chmod(KEYS_FILE, 0o600)
+    except OSError:
+        pass
+
+
+@app.route("/api/keys", methods=["GET"])
+def api_keys_status():
+    keys = load_keys()
+
+    return jsonify({
+        provider: {
+            "name": settings["name"],
+            "configured": bool(keys[provider])
+        }
+        for provider, settings in PROVIDERS.items()
+    })
+
+
+@app.route("/api/keys", methods=["POST"])
+def api_keys_save():
+    data = request.get_json(silent=True) or {}
+    keys = load_keys()
+
+    for provider in PROVIDERS:
+        if provider in data:
+            value = str(data[provider]).strip()
+
+            # الحقل الفارغ لا يمسح المفتاح الحالي.
+            if value:
+                keys[provider] = value
+
+    try:
+        save_keys(keys)
+    except OSError:
+        return jsonify({
+            "error": "تعذر حفظ المفاتيح على الجهاز."
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "message": "تم حفظ المفاتيح بنجاح."
+    })
+
+
+# ==================================================
+# DATABASE
+# ==================================================
+
+def get_db():
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
-    with db() as conn:
+    with get_db() as conn:
         conn.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                provider TEXT PRIMARY KEY,
-                api_key TEXT NOT NULL DEFAULT ''
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS chats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                messages TEXT NOT NULL DEFAULT '[]',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
         """)
 
-        for provider in PROVIDERS:
-            conn.execute(
-                "INSERT OR IGNORE INTO settings(provider, api_key) VALUES (?, '')",
-                (provider,)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                model TEXT,
+                created_at TEXT NOT NULL
             )
+        """)
 
 
-def get_key(provider):
-    with db() as conn:
+def now():
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def create_conversation(title="محادثة جديدة"):
+    conversation_id = str(uuid.uuid4())
+    timestamp = now()
+
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO conversations
+                (id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        """, (conversation_id, title, timestamp, timestamp))
+
+    return conversation_id
+
+
+def conversation_exists(conversation_id):
+    with get_db() as conn:
         row = conn.execute(
-            "SELECT api_key FROM settings WHERE provider=?",
-            (provider,)
+            "SELECT id FROM conversations WHERE id = ?",
+            (conversation_id,)
         ).fetchone()
-    return row["api_key"] if row else ""
+
+    return row is not None
 
 
-def get_keys():
-    return {p: get_key(p) for p in PROVIDERS}
+def save_message(conversation_id, role, content, model=None):
+    timestamp = now()
+
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO messages
+                (conversation_id, role, content, model, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            conversation_id,
+            role,
+            content,
+            model,
+            timestamp
+        ))
+
+        conn.execute("""
+            UPDATE conversations
+            SET updated_at = ?
+            WHERE id = ?
+        """, (timestamp, conversation_id))
 
 
-def fetch_models(provider):
+def get_messages(conversation_id):
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT role, content, model, created_at
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY id
+        """, (conversation_id,)).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+# ==================================================
+# MODEL DISCOVERY
+# ==================================================
+
+def get_models(provider):
     key = get_key(provider)
+
     if not key:
         return []
 
     try:
-        if provider == "openai":
-            r = requests.get(
-                "https://api.openai.com/v1/models",
-                headers={"Authorization": f"Bearer {key}"},
-                timeout=20
-            )
-            r.raise_for_status()
-            data = r.json().get("data", [])
-
-            return sorted(
-                [
-                    {
-                        "id": m["id"],
-                        "name": m["id"],
-                        "provider": provider
-                    }
-                    for m in data
-                    if m.get("id", "").startswith(
-                        ("gpt-", "o1", "o3", "o4")
-                    )
-                ],
-                key=lambda x: x["id"]
+        if provider == "gemini":
+            response = requests.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={
+                    "key": key,
+                    "pageSize": 1000
+                },
+                timeout=30
             )
 
-        elif provider == "anthropic":
-            r = requests.get(
+            if not response.ok:
+                print("Gemini models error:", response.text[:500])
+                return []
+
+            result = []
+
+            for model in response.json().get("models", []):
+                methods = model.get(
+                    "supportedGenerationMethods", []
+                )
+
+                if "generateContent" not in methods:
+                    continue
+
+                model_id = model.get("name", "").replace(
+                    "models/", "", 1
+                )
+
+                if model_id:
+                    result.append({
+                        "id": model_id,
+                        "name": model.get(
+                            "displayName", model_id
+                        )
+                    })
+
+            return result
+
+        if provider == "anthropic":
+            response = requests.get(
                 "https://api.anthropic.com/v1/models",
                 headers={
                     "x-api-key": key,
                     "anthropic-version": "2023-06-01"
                 },
                 params={"limit": 100},
-                timeout=20
+                timeout=30
             )
-            r.raise_for_status()
-            data = r.json().get("data", [])
+
+            if not response.ok:
+                print("Anthropic models error:", response.text[:500])
+                return []
 
             return [
                 {
-                    "id": m["id"],
-                    "name": m.get("display_name", m["id"]),
-                    "provider": provider
+                    "id": model["id"],
+                    "name": model.get(
+                        "display_name", model["id"]
+                    )
                 }
-                for m in data
+                for model in response.json().get("data", [])
+                if model.get("id")
             ]
 
-        elif provider == "gemini":
-            r = requests.get(
-                "https://generativelanguage.googleapis.com/v1beta/models",
-                params={"key": key, "pageSize": 1000},
-                timeout=20
+        if provider == "openai":
+            response = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={
+                    "Authorization": f"Bearer {key}"
+                },
+                timeout=30
             )
-            r.raise_for_status()
-            data = r.json().get("models", [])
 
-            return [
-                {
-                    "id": m["name"].replace("models/", ""),
-                    "name": m.get("displayName", m["name"]),
-                    "provider": provider
-                }
-                for m in data
-                if "generateContent" in m.get("supportedGenerationMethods", [])
-            ]
+            if not response.ok:
+                print("OpenAI models error:", response.text[:500])
+                return []
 
-    except requests.RequestException as e:
-        print(f"Model loading error ({provider}): {e}")
+            result = []
+
+            for model in response.json().get("data", []):
+                model_id = model.get("id", "")
+
+                # عرض موديلات GPT وموديلات الاستدلال الشائعة.
+                # ليس كل موديل في هذه القائمة مضمون التوافق
+                # مع واجهة chat/completions.
+                if model_id.startswith(
+                    ("gpt-", "o1", "o3", "o4")
+                ):
+                    result.append({
+                        "id": model_id,
+                        "name": model_id
+                    })
+
+            return result
+
+    except requests.RequestException as error:
+        print(f"Model discovery error ({provider}): {error}")
 
     return []
 
 
-def call_ai(provider, model, messages):
+@app.route("/api/models/<provider>", methods=["GET"])
+def models_route(provider):
+    if provider not in PROVIDERS:
+        return jsonify({
+            "error": "المزوّد غير معروف."
+        }), 400
+
     key = get_key(provider)
+
     if not key:
-        raise ValueError(f"API key for {provider} is missing.")
+        return jsonify({
+            "provider": provider,
+            "configured": False,
+            "models": [],
+            "error": "أضف مفتاح API أولاً."
+        })
+
+    models = get_models(provider)
+
+    return jsonify({
+        "provider": provider,
+        "configured": True,
+        "models": models
+    })
+
+
+# ==================================================
+# AI PROVIDERS
+# ==================================================
+
+def call_ai(provider, model, history, message):
+    key = get_key(provider)
+
+    if not key:
+        raise ValueError(
+            f"لم تتم إضافة مفتاح {PROVIDERS[provider]['name']}."
+        )
+
+    # لا نكرر الرسالة الحالية في السجل؛ فهي تُرسل منفصلة.
+    chat_history = [
+        {
+            "role": item["role"],
+            "content": item["content"]
+        }
+        for item in history
+        if item["role"] in ("user", "assistant")
+    ]
+
+    if provider == "gemini":
+        client = genai.Client(api_key=key)
+
+        contents = []
+
+        for item in chat_history:
+            contents.append({
+                "role": (
+                    "user"
+                    if item["role"] == "user"
+                    else "model"
+                ),
+                "parts": [{"text": item["content"]}]
+            })
+
+        contents.append({
+            "role": "user",
+            "parts": [{"text": message}]
+        })
+
+        response = client.models.generate_content(
+            model=model,
+            contents=contents
+        )
+
+        return response.text or "لم يصل رد نصي من النموذج."
+
+    if provider == "anthropic":
+        # Claude لا يقبل system كرسالة عادية داخل messages.
+        messages = [
+            {
+                "role": item["role"],
+                "content": item["content"]
+            }
+            for item in chat_history
+        ]
+
+        messages.append({
+            "role": "user",
+            "content": message
+        })
+
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model,
+                "max_tokens": 4096,
+                "messages": messages
+            },
+            timeout=120
+        )
+
+        data = response.json()
+
+        if not response.ok:
+            raise ValueError(
+                data.get("error", {}).get(
+                    "message", str(data)
+                )
+            )
+
+        return "".join(
+            block.get("text", "")
+            for block in data.get("content", [])
+            if block.get("type") == "text"
+        )
 
     if provider == "openai":
+        messages = list(chat_history)
+
+        messages.append({
+            "role": "user",
+            "content": message
+        })
+
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={
@@ -168,484 +481,168 @@ def call_ai(provider, model, messages):
         )
 
         data = response.json()
+
         if not response.ok:
-            raise ValueError(data.get("error", {}).get("message", str(data)))
+            raise ValueError(
+                data.get("error", {}).get(
+                    "message", str(data)
+                )
+            )
 
         return data["choices"][0]["message"]["content"]
 
-    elif provider == "anthropic":
-        system_messages = [
-            m["content"] for m in messages if m["role"] == "system"
-        ]
-        chat_messages = [
-            {"role": m["role"], "content": m["content"]}
-            for m in messages
-            if m["role"] in ("user", "assistant")
-        ]
+    raise ValueError("المزوّد غير مدعوم.")
 
-        payload = {
-            "model": model,
-            "max_tokens": 4096,
-            "messages": chat_messages
-        }
 
-        if system_messages:
-            payload["system"] = "\n".join(system_messages)
-
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json"
-            },
-            json=payload,
-            timeout=120
-        )
-
-        data = response.json()
-        if not response.ok:
-            raise ValueError(data.get("error", {}).get("message", str(data)))
-
-        return "".join(
-            block.get("text", "")
-            for block in data.get("content", [])
-            if block.get("type") == "text"
-        )
-
-    elif provider == "gemini":
-        system_messages = [
-            m["content"] for m in messages if m["role"] == "system"
-        ]
-        chat_messages = [
-            m for m in messages if m["role"] in ("user", "assistant")
-        ]
-
-        contents = []
-        for m in chat_messages:
-            contents.append({
-                "role": "user" if m["role"] == "user" else "model",
-                "parts": [{"text": m["content"]}]
-            })
-
-        payload = {"contents": contents}
-
-        if system_messages:
-            payload["systemInstruction"] = {
-                "parts": [{"text": "\n".join(system_messages)}]
-            }
-
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent",
-            params={"key": key},
-            json=payload,
-            timeout=120
-        )
-
-        data = response.json()
-        if not response.ok:
-            raise ValueError(
-                data.get("error", {}).get("message", str(data))
-            )
-
-        return "".join(
-            part.get("text", "")
-            for part in data["candidates"][0]["content"]["parts"]
-            if "text" in part
-        )
-
-    raise ValueError("Unsupported provider.")
-
+# ==================================================
+# WEB ROUTES
+# ==================================================
 
 @app.route("/")
 def index():
-    return render_template_string(HTML)
+    return render_template(
+        "index.html",
+        models=MODELS,
+        providers=PROVIDERS
+    )
 
 
-@app.route("/api/settings", methods=["GET"])
-def settings_get():
-    return jsonify({
-        provider: {
-            "configured": bool(get_key(provider)),
-            "name": info["name"],
-            "key_url": info["key_url"]
-        }
-        for provider, info in PROVIDERS.items()
-    })
+@app.route("/conversations", methods=["GET"])
+def list_conversations():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, title, created_at, updated_at
+            FROM conversations
+            ORDER BY updated_at DESC
+        """).fetchall()
 
-
-@app.route("/api/settings", methods=["POST"])
-def settings_post():
-    data = request.get_json(force=True)
-
-    with db() as conn:
-        for provider in PROVIDERS:
-            if provider in data:
-                key = str(data[provider]).strip()
-                conn.execute(
-                    """INSERT INTO settings(provider, api_key)
-                       VALUES (?, ?)
-                       ON CONFLICT(provider)
-                       DO UPDATE SET api_key=excluded.api_key""",
-                    (provider, key)
-                )
-
-    return jsonify({"ok": True})
-
-
-@app.route("/api/models")
-def models():
-    result = {}
-    for provider, info in PROVIDERS.items():
-        result[provider] = {
-            "name": info["name"],
-            "configured": bool(get_key(provider)),
-            "models": fetch_models(provider)
-        }
-
-    return jsonify(result)
-
-
-@app.route("/api/chats", methods=["GET"])
-def list_chats():
-    with db() as conn:
-        rows = conn.execute(
-            "SELECT id, title, provider, model, created_at "
-            "FROM chats ORDER BY id DESC"
-        ).fetchall()
     return jsonify([dict(row) for row in rows])
 
 
-@app.route("/api/chats", methods=["POST"])
-def create_chat():
-    data = request.get_json(force=True)
-    provider = data.get("provider")
-    model = data.get("model")
-
-    if provider not in PROVIDERS or not model:
-        return jsonify({"error": "Invalid provider or model"}), 400
-
-    with db() as conn:
-        cur = conn.execute(
-            "INSERT INTO chats(title, provider, model, messages) "
-            "VALUES (?, ?, ?, '[]')",
-            ("New conversation", provider, model)
-        )
-        chat_id = cur.lastrowid
-
-    return jsonify({"id": chat_id})
-
-
-@app.route("/api/chats/<int:chat_id>", methods=["GET"])
-def get_chat(chat_id):
-    with db() as conn:
-        row = conn.execute(
-            "SELECT * FROM chats WHERE id=?", (chat_id,)
-        ).fetchone()
-
-    if not row:
-        return jsonify({"error": "Chat not found"}), 404
+@app.route("/conversations", methods=["POST"])
+def new_conversation():
+    conversation_id = create_conversation()
 
     return jsonify({
-        "id": row["id"],
-        "title": row["title"],
-        "provider": row["provider"],
-        "model": row["model"],
-        "messages": json.loads(row["messages"])
+        "id": conversation_id,
+        "title": "محادثة جديدة"
     })
 
 
-@app.route("/api/chats/<int:chat_id>/send", methods=["POST"])
-def send_message(chat_id):
-    data = request.get_json(force=True)
-    content = str(data.get("message", "")).strip()
+@app.route("/conversations/<conversation_id>", methods=["GET"])
+def load_conversation(conversation_id):
+    if not conversation_exists(conversation_id):
+        return jsonify({
+            "error": "المحادثة غير موجودة"
+        }), 404
 
-    if not content:
-        return jsonify({"error": "Message is empty"}), 400
+    return jsonify({
+        "id": conversation_id,
+        "messages": get_messages(conversation_id)
+    })
 
-    with db() as conn:
-        row = conn.execute(
-            "SELECT * FROM chats WHERE id=?", (chat_id,)
-        ).fetchone()
 
-    if not row:
-        return jsonify({"error": "Chat not found"}), 404
-
-    messages = json.loads(row["messages"])
-    messages.append({"role": "user", "content": content})
-
-    try:
-        answer = call_ai(row["provider"], row["model"], messages)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-    messages.append({"role": "assistant", "content": answer})
-
-    title = row["title"]
-    if title == "New conversation":
-        title = content[:50]
-
-    with db() as conn:
+@app.route("/conversations/<conversation_id>", methods=["DELETE"])
+def delete_conversation(conversation_id):
+    with get_db() as conn:
         conn.execute(
-            "UPDATE chats SET messages=?, title=? WHERE id=?",
-            (json.dumps(messages, ensure_ascii=False), title, chat_id)
+            "DELETE FROM messages WHERE conversation_id = ?",
+            (conversation_id,)
         )
 
-    return jsonify({"answer": answer, "messages": messages})
+        conn.execute(
+            "DELETE FROM conversations WHERE id = ?",
+            (conversation_id,)
+        )
+
+    return jsonify({"success": True})
 
 
-HTML = r"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Assistant</title>
-<style>
-*{box-sizing:border-box}
-body{margin:0;font-family:Arial;background:#101318;color:#eee}
-header{padding:15px 20px;background:#191e27;font-size:22px;font-weight:bold}
-.layout{display:flex;height:calc(100vh - 58px)}
-aside{width:290px;background:#171b23;padding:15px;overflow:auto}
-main{flex:1;display:flex;flex-direction:column;min-width:0}
-button,select,input,textarea{font:inherit;border-radius:7px;border:1px solid #404754;padding:10px;background:#222833;color:white}
-button{cursor:pointer;background:#3267d6;border:0}
-button:hover{opacity:.85}
-input,select{width:100%;margin:6px 0 12px}
-label{font-size:13px;color:#bdc6d7}
-.panel{padding:12px;border:1px solid #343b48;border-radius:9px;margin-bottom:12px}
-#chatList button{display:block;width:100%;text-align:left;margin:5px 0;background:#252b36;overflow-wrap:anywhere}
-#messages{flex:1;overflow:auto;padding:20px}
-.msg{max-width:850px;margin:0 auto 14px;padding:14px;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.5}
-.user{background:#253957}
-.assistant{background:#1d252e}
-#composer{padding:15px;display:flex;gap:10px}
-#message{flex:1;resize:vertical;min-height:48px;max-height:180px}
-#status{font-size:13px;color:#b8c2d5;white-space:pre-wrap}
-h3{margin:8px 0 12px}
-@media(max-width:700px){aside{width:150px;padding:8px}.layout{height:calc(100vh - 58px)}#messages{padding:8px}#composer{padding:8px}}
-</style>
-</head>
-<body>
-<header>AI Assistant — Multi-Model</header>
-<div class="layout">
-<aside>
-<div class="panel">
-<h3>API Settings</h3>
-<label>OpenAI API Key</label>
-<input id="openai" type="password" placeholder="Enter or update key">
-<label>Anthropic API Key</label>
-<input id="anthropic" type="password" placeholder="Enter or update key">
-<label>Gemini API Key</label>
-<input id="gemini" type="password" placeholder="Enter or update key">
-<button onclick="saveKeys()" style="width:100%">Save API Keys</button>
-<p id="status"></p>
-</div>
-<div class="panel">
-<h3>Model</h3>
-<button onclick="loadModels()" style="width:100%">Refresh Models</button>
-<label>Provider</label>
-<select id="provider" onchange="updateModels()">
-<option value="openai">ChatGPT / OpenAI</option>
-<option value="anthropic">Claude / Anthropic</option>
-<option value="gemini">Gemini</option>
-</select>
-<label>Available model</label>
-<select id="model"></select>
-<button onclick="newChat()" style="width:100%">+ New Chat</button>
-</div>
-<h3>History</h3>
-<div id="chatList"></div>
-</aside>
-<main>
-<div id="messages"></div>
-<div id="composer">
-<textarea id="message" placeholder="Type your message..."></textarea>
-<button onclick="sendMessage()">Send</button>
-</div>
-</main>
-</div>
-<script>
-let allModels = {};
-let currentChat = null;
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.get_json(silent=True) or {}
 
-async function api(url, options={}) {
-    const response = await fetch(url, {
-        headers: {'Content-Type':'application/json'},
-        ...options
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Request failed');
-    return data;
-}
+    message = str(data.get("message", "")).strip()
+    model = str(data.get("model", "")).strip()
+    provider = str(data.get("provider", "gemini")).strip()
+    conversation_id = data.get("conversation_id")
 
-async function loadSettings() {
-    const data = await api('/api/settings');
-    for (const p of ['openai','anthropic','gemini']) {
-        document.getElementById(p).placeholder =
-            data[p].configured ? 'Key saved — enter new key to change' : 'API key not set';
-    }
-}
+    if not message:
+        return jsonify({
+            "error": "اكتب رسالة أولاً."
+        }), 400
 
-async function saveKeys() {
-    const data = {};
-    for (const p of ['openai','anthropic','gemini']) {
-        const value = document.getElementById(p).value.trim();
-        if (value) data[p] = value;
-    }
-    try {
-        await api('/api/settings', {
-            method:'POST', body:JSON.stringify(data)
-        });
-        for (const p of ['openai','anthropic','gemini'])
-            document.getElementById(p).value = '';
-        document.getElementById('status').textContent =
-            'Keys saved. Refreshing model lists...';
-        await loadSettings();
-        await loadModels();
-    } catch(e) {
-        document.getElementById('status').textContent = e.message;
-    }
-}
+    if provider not in PROVIDERS:
+        return jsonify({
+            "error": "المزوّد غير معروف."
+        }), 400
 
-async function loadModels() {
-    const status = document.getElementById('status');
-    status.textContent = 'Loading models...';
-    try {
-        allModels = await api('/api/models');
-        updateModels();
-        let lines = [];
-        for (const [p, group] of Object.entries(allModels)) {
-            lines.push(group.name + ': ' +
-                (group.configured
-                    ? group.models.length + ' models found'
-                    : 'API key not set'));
-        }
-        status.textContent = lines.join('\\n');
-    } catch(e) {
-        status.textContent = e.message;
-    }
-}
+    if not model:
+        return jsonify({
+            "error": "اختر نموذجاً أولاً."
+        }), 400
 
-function updateModels() {
-    const provider = document.getElementById('provider').value;
-    const select = document.getElementById('model');
-    select.innerHTML = '';
-    const models = (allModels[provider] || {}).models || [];
-    for (const m of models) {
-        const option = document.createElement('option');
-        option.value = m.id;
-        option.textContent = m.name + ' (' + m.id + ')';
-        select.appendChild(option);
-    }
-    if (!models.length) {
-        const option = document.createElement('option');
-        option.textContent = 'No models loaded — save key and refresh';
-        option.value = '';
-        select.appendChild(option);
-    }
-}
+    if not get_key(provider):
+        return jsonify({
+            "error": (
+                f"أضف مفتاح {PROVIDERS[provider]['name']} أولاً."
+            )
+        }), 400
 
-async function newChat() {
-    const provider = document.getElementById('provider').value;
-    const model = document.getElementById('model').value;
-    if (!model) {
-        alert('Select a model first. Check your API key and refresh models.');
-        return;
-    }
-    try {
-        const data = await api('/api/chats', {
-            method:'POST',
-            body:JSON.stringify({provider, model})
-        });
-        currentChat = data.id;
-        document.getElementById('messages').innerHTML = '';
-        await loadChats();
-    } catch(e) { alert(e.message); }
-}
+    if not conversation_id or not conversation_exists(
+        conversation_id
+    ):
+        conversation_id = create_conversation(message[:60])
 
-function renderMessages(messages) {
-    const container = document.getElementById('messages');
-    container.innerHTML = '';
-    for (const m of messages) {
-        const div = document.createElement('div');
-        div.className = 'msg ' + m.role;
-        div.textContent = (m.role === 'user' ? 'You' : 'AI') +
-            '\\n\\n' + m.content;
-        container.appendChild(div);
-    }
-    container.scrollTop = container.scrollHeight;
-}
+    # نحفظ رسالة المستخدم قبل إرسال الطلب.
+    save_message(
+        conversation_id,
+        "user",
+        message,
+        f"{provider}:{model}"
+    )
 
-async function openChat(id) {
-    try {
-        const chat = await api('/api/chats/' + id);
-        currentChat = id;
-        document.getElementById('provider').value = chat.provider;
-        await loadModels();
-        document.getElementById('provider').value = chat.provider;
-        updateModels();
-        document.getElementById('model').value = chat.model;
-        renderMessages(chat.messages);
-    } catch(e) { alert(e.message); }
-}
+    # سجل الرسائل يحتوي الرسالة الحالية أيضاً.
+    history = get_messages(conversation_id)[:-1]
 
-async function loadChats() {
-    const chats = await api('/api/chats');
-    const list = document.getElementById('chatList');
-    list.innerHTML = '';
-    for (const chat of chats) {
-        const button = document.createElement('button');
-        button.textContent = chat.title + ' [' + chat.provider + ']';
-        button.onclick = () => openChat(chat.id);
-        list.appendChild(button);
-    }
-}
+    try:
+        reply = call_ai(
+            provider,
+            model,
+            history,
+            message
+        )
 
-async function sendMessage() {
-    const input = document.getElementById('message');
-    const message = input.value.trim();
-    if (!message) return;
-    if (!currentChat) await newChat();
-    if (!currentChat) return;
+        save_message(
+            conversation_id,
+            "assistant",
+            reply,
+            f"{provider}:{model}"
+        )
 
-    input.value = '';
-    const container = document.getElementById('messages');
-    const pending = document.createElement('div');
-    pending.className = 'msg assistant';
-    pending.textContent = 'Thinking...';
-    container.appendChild(pending);
+        return jsonify({
+            "reply": reply,
+            "provider": provider,
+            "model": model,
+            "conversation_id": conversation_id
+        })
 
-    try {
-        const data = await api('/api/chats/' + currentChat + '/send', {
-            method:'POST',
-            body:JSON.stringify({message})
-        });
-        renderMessages(data.messages);
-        await loadChats();
-    } catch(e) {
-        pending.textContent = 'Error: ' + e.message;
-    }
-}
+    except Exception as error:
+        app.logger.exception("AI request failed")
 
-document.getElementById('message').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
+        return jsonify({
+            "error": str(error),
+            "conversation_id": conversation_id
+        }), 500
 
-(async function init() {
-    await loadSettings();
-    await loadModels();
-    await loadChats();
-})();
-</script>
-</body>
-</html>
-"""
+
+init_db()
+
 
 if __name__ == "__main__":
-    init_db()
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=False,
+        threaded=True
+    )
